@@ -6,7 +6,13 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from src.config import ConfigManager, DEFAULT_APP_CONFIG, CONFIG_SCHEMA, _deep_merge
+from src.config import (
+    ConfigManager,
+    DEFAULT_APP_CONFIG,
+    CONFIG_SCHEMA,
+    _deep_merge,
+    get_missing_telegram_user_fields,
+)
 
 
 class TestConfigHelpers(unittest.TestCase):
@@ -18,6 +24,15 @@ class TestConfigHelpers(unittest.TestCase):
         )
         self.assertEqual(merged["runtime"]["max_steps"], 500)
         self.assertEqual(merged["runtime"]["step_delay"], 5)
+
+    def test_get_missing_telegram_user_fields(self):
+        config = _deep_merge(DEFAULT_APP_CONFIG, {})
+        missing = get_missing_telegram_user_fields(config)
+
+        self.assertIn("api_id", missing)
+        self.assertIn("api_hash", missing)
+        self.assertIn("target_chat", missing)
+        self.assertNotIn("allowed_topics", missing)
 
 
 class TestConfigManager(unittest.TestCase):

@@ -4,10 +4,15 @@ IM 机器人 - 主入口
 """
 import sys
 import argparse
-from src.im_bot import IMBot
 from src.platforms import list_platforms
+from src.launcher import launch_platform
 from src.utils.logger import logger
-from src.config import get_app_config, validate_config, LOG_FILE
+from src.config import (
+    get_config_center_url,
+    get_app_config,
+    validate_config,
+    LOG_FILE,
+)
 
 
 def main():
@@ -68,8 +73,16 @@ def main():
         action='store_true',
         help='调试模式（更多日志）'
     )
+
+    parser.add_argument(
+        '--transport',
+        choices=['auto', 'user', 'web'],
+        default='auto',
+        help='Telegram 传输方式：user=用户账号模式，web=旧版 Telegram Web，auto=按配置自动选择'
+    )
     
     args = parser.parse_args()
+    config_center_url = get_config_center_url()
     
     # 设置日志级别
     logger.log_file = LOG_FILE
@@ -85,17 +98,25 @@ def main():
     except ValueError as e:
         logger.error(f"配置错误: {e}")
         logger.info("请设置环境变量 KIMI_API_KEY，或运行 python config_center.py 打开配置台")
+        logger.info(f"配置中心默认地址: {config_center_url}（需先运行 python config_center.py）")
         sys.exit(1)
-    
-    # 启动机器人
-    bot = IMBot(
-        platform=args.platform,
-        max_steps=args.steps,
-        step_delay=args.delay,
-        headless=args.headless
-    )
-    
-    bot.start()
+
+    try:
+        logger.info(f"配置中心 / 运行后台地址: {config_center_url}（需先运行 python config_center.py）")
+        launch_platform(
+            platform=args.platform,
+            max_steps=args.steps,
+            step_delay=args.delay,
+            headless=args.headless,
+            transport=args.transport,
+        )
+    except ValueError as e:
+        if args.platform == 'telegram':
+            logger.error(f"Telegram 配置错误: {e}")
+            logger.info("请补充 TELEGRAM_API_ID / TELEGRAM_API_HASH / telegram_user.target_chat 等配置")
+        else:
+            logger.error(f"启动失败: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -3,10 +3,20 @@
 交互式启动脚本 - 更方便的启动方式
 """
 import sys
-from src.im_bot import IMBot
+from getpass import getpass
+from src.launcher import launch_platform, resolve_telegram_transport
 from src.platforms import list_platforms, get_platform
+from src.telegram_userbot import TelegramUserSettings, fetch_recent_dialog_choices
 from src.utils.logger import logger
-from src.config import get_app_config, validate_config, resolve_kimi_api_key, LOG_FILE
+from src.config import (
+    get_config_center_url,
+    get_app_config,
+    validate_config,
+    resolve_kimi_api_key,
+    save_app_config,
+    get_missing_telegram_user_fields,
+    LOG_FILE,
+)
 
 
 def print_menu():
@@ -65,15 +75,106 @@ def get_config():
     delay_input = input(f"每步间隔秒数 [默认: {runtime_config['step_delay']}]: ").strip()
     delay = int(delay_input) if delay_input.isdigit() else runtime_config['step_delay']
     
+    transport = 'auto'
+    if platform == 'telegram':
+        default_transport = resolve_telegram_transport('auto', app_config)
+        transport_input = input(f"Telegram 启动方式 [默认: {default_transport}, user/web]: ").strip().lower()
+        if transport_input in {'user', 'web'}:
+            transport = transport_input
+
     return {
         'platform': platform,
         'steps': steps,
-        'delay': delay
+        'delay': delay,
+        'transport': transport,
     }
+
+
+def ensure_telegram_user_onboarding():
+    """交互式补齐 Telegram 用户账号模式的关键配置"""
+    app_config = get_app_config()
+    missing = get_missing_telegram_user_fields(app_config)
+    if not missing:
+        return
+
+    telegram_user = dict(app_config.get('telegram_user', {}))
+    print("\n" + "=" * 60)
+    print("Telegram 用户账号模式首次配置")
+    print("=" * 60)
+    print("当前缺少以下关键项: " + ", ".join(missing))
+    print("直接回车将保留现有值。\n")
+
+    if 'api_id' in missing:
+        current = telegram_user.get('api_id', '')
+        value = input(f"TELEGRAM_API_ID [{current or '未设置'}]: ").strip()
+        if value:
+            telegram_user['api_id'] = value
+
+    if 'api_hash' in missing:
+        current = telegram_user.get('api_hash', '')
+        prompt = "TELEGRAM_API_HASH [已设置则回车跳过]: " if current else "TELEGRAM_API_HASH: "
+        value = getpass(prompt).strip()
+        if value:
+            telegram_user['api_hash'] = value
+
+    phone_current = telegram_user.get('phone_number', '')
+    phone_value = input(f"手机号（可选） [{phone_current or '留空即可'}]: ").strip()
+    if phone_value:
+        telegram_user['phone_number'] = phone_value
+
+    if 'target_chat' in missing:
+        current = telegram_user.get('target_chat', '')
+        if telegram_user.get('api_id') and telegram_user.get('api_hash'):
+            use_picker = input("尝试读取最近聊天列表来选择目标聊天？ [Y/n]: ").strip().lower()
+            if use_picker in {"", "y", "yes"}:
+                temp_config = dict(app_config)
+                temp_config['telegram_user'] = telegram_user
+                try:
+                    settings = TelegramUserSettings.from_config(temp_config)
+                    choices = fetch_recent_dialog_choices(settings, limit=12)
+                except Exception as exc:
+                    print(f"读取最近聊天失败: {exc}")
+                    choices = []
+
+                if choices:
+                    print("\n最近聊天列表:")
+                    for index, choice in enumerate(choices, 1):
+                        print(f"  {index}. {choice.display_label()}")
+
+                    selection = input("选择目标聊天编号，或直接回车手动输入: ").strip()
+                    if selection.isdigit():
+                        idx = int(selection) - 1
+                        if 0 <= idx < len(choices):
+                            telegram_user['target_chat'] = choices[idx].target_value()
+                            print(f"已选择目标聊天: {choices[idx].display_label()}")
+
+        if not telegram_user.get('target_chat'):
+            value = input(f"目标聊天用户名/备注名/ID [{current or '未设置'}]: ").strip()
+            if value:
+                telegram_user['target_chat'] = value
+
+    if 'persona' in missing:
+        current = telegram_user.get('persona', '')
+        value = input(f"人设说明 [{current or '未设置'}]: ").strip()
+        if value:
+            telegram_user['persona'] = value
+
+    if 'allowed_topics' in missing:
+        current_topics = telegram_user.get('allowed_topics', [])
+        current_label = "、".join(current_topics) if current_topics else "未设置"
+        value = input(f"允许话题（用中文逗号分隔） [{current_label}]: ").strip()
+        if value:
+            telegram_user['allowed_topics'] = [item.strip() for item in value.replace('，', ',').split(',') if item.strip()]
+
+    app_config['telegram_user'] = telegram_user
+    save_app_config(app_config)
+    print("\n已保存 Telegram 用户账号配置。")
+    print("首次登录时 Telethon 会在终端中提示验证码，session 会保存在 data/telegram_sessions 下。\n")
 
 
 def main():
     app_config = get_app_config()
+    config_center_url = get_config_center_url()
     logging_config = app_config['logging']
     logger.log_file = LOG_FILE
     logger.set_level(logging_config['level'])
@@ -90,6 +191,7 @@ def main():
         print("  export KIMI_API_KEY='sk-your-api-key'")
         print("\n方法 2 (配置台):")
         print("  python config_center.py")
+        print(f"  打开后访问: {config_center_url}")
         print("\n方法 3 (永久 - bash/zsh):")
         print("  echo 'export KIMI_API_KEY=sk-your-api-key' >> ~/.zshrc")
         print("  source ~/.zshrc")
@@ -108,16 +210,21 @@ def main():
         print(f"\n启动 {config['platform']} 机器人...")
         print(f"配置: {config['steps']} 步, {config['delay']} 秒间隔")
         print("按 Ctrl+C 停止\n")
-        
-        # 启动机器人
-        bot = IMBot(
-            platform=config['platform'],
-            max_steps=config['steps'],
-            step_delay=config['delay']
-        )
-        
+        print(f"配置中心 / 运行后台地址: {config_center_url}（需先运行 python config_center.py）\n")
+        logger.info(f"配置中心 / 运行后台地址: {config_center_url}（需先运行 python config_center.py）")
+
+        if config['platform'] == 'telegram' and config.get('transport', 'auto') != 'web':
+            ensure_telegram_user_onboarding()
+
         try:
-            bot.start()
+            launch_platform(
+                platform=config['platform'],
+                max_steps=config['steps'],
+                step_delay=config['delay'],
+                transport=config.get('transport', 'auto'),
+            )
+        except ValueError as e:
+            logger.error(f"配置错误: {e}")
         except Exception as e:
             logger.error(f"机器人异常: {e}")
         

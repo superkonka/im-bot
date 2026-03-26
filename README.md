@@ -1,17 +1,20 @@
-# 🤖 Kimi 视觉驱动 IM 机器人 v1.1
+# 🤖 IM Bot
 
-利用 Kimi LLM 的视觉能力，让 AI 自主控制浏览器完成 **WhatsApp Web** 和 **Telegram Web** 的消息监控与自动回复。
+当前项目已经形成两条不同能力路径：
+
+- `Telegram`：主路径，基于 `Telethon` 登录用户自己的账号，围绕指定聊天对象做受控的长期对话
+- `WhatsApp Web`：保留的浏览器视觉实验路径，适合继续验证 Web 自动化场景
 
 ## ✨ 核心特性
 
 | 特性 | 说明 |
 |-----|------|
-| 🔮 **纯视觉驱动** | Kimi 直接分析截图决策，无需解析 DOM |
-| 📱 **双平台支持** | WhatsApp Web + Telegram Web |
-| 🧠 **智能回复** | 内置常用回复策略，支持自定义 |
-| 🔒 **安全登录** | 二维码/手机号登录，人工确认 |
-| 📊 **完整日志** | 彩色控制台 + 文件日志 + 截图记录 |
-| 🧩 **模块化架构** | 易于扩展更多平台 |
+| 🤖 **Telegram 用户账号模式** | 用户登录自己的 Telegram 账号，而不是官方 Bot |
+| 🧠 **受控 LLM 对话** | 回复和主动发起都结合人设、聊天历史、时间语义 |
+| 🛡️ **双层安全约束** | 白名单话题、黑名单、发送前二次审核、主动频率限制 |
+| 🧠 **长期记忆骨架** | 保存关系摘要、重要事实、未完话题、近期主题 |
+| 📊 **完整日志** | 彩色控制台 + 文件日志 + 会话状态持久化 |
+| 🧪 **Web 视觉实验路径** | 旧的 WhatsApp/Telegram Web 自动化仍可作为实验保留 |
 
 ---
 
@@ -29,7 +32,11 @@ cd /Users/konkapeng/im_bot
 pip install -r requirements.txt
 ```
 
-### 3. 安装 Browser Use CLI
+### 3. Telegram 用户账号模式额外依赖
+
+如果你主要使用 Telegram 用户账号模式，只需要 `requirements.txt` 中的 Python 依赖即可。
+
+### 4. Browser Use CLI（仅 WhatsApp Web / 旧版 Telegram Web 需要）
 
 ```bash
 # macOS / Linux
@@ -39,7 +46,7 @@ curl -fsSL https://browser-use.com/cli/install.sh | bash
 browser-use doctor
 ```
 
-### 4. 配置 API Key
+### 5. 配置 API Key
 
 ```bash
 # 临时设置
@@ -52,6 +59,17 @@ source ~/.zshrc
 
 获取 API Key: https://platform.moonshot.cn/
 
+### 6. Telegram 用户账号模式所需凭据
+
+需要从 Telegram 开发者平台获取：
+
+```bash
+export TELEGRAM_API_ID="your-api-id"
+export TELEGRAM_API_HASH="your-api-hash"
+```
+
+也可以通过 `python config_center.py` 或交互式启动时按提示写入配置。
+
 ---
 
 ## 🚀 快速开始
@@ -63,6 +81,7 @@ python run.py
 ```
 
 按提示选择平台、配置参数。
+如果选择 Telegram，默认会走用户账号模式，并在缺少配置时提示补齐 `API ID / API Hash / target_chat / persona`。
 
 ### 方式二：命令行启动
 
@@ -70,8 +89,11 @@ python run.py
 # WhatsApp
 python main.py whatsapp
 
-# Telegram
-python main.py telegram
+# Telegram 用户账号模式（推荐）
+python main.py telegram --transport user
+
+# Telegram 旧版 Web 实验路径
+python main.py telegram --transport web
 
 # 高级配置
 python main.py whatsapp --steps 200 --delay 5 --debug
@@ -80,10 +102,10 @@ python main.py whatsapp --steps 200 --delay 5 --debug
 ### 方式三：Python 代码
 
 ```python
-from src.im_bot import IMBot
+from src.telegram_userbot import TelegramUserBot
 
-bot = IMBot(platform='whatsapp', max_steps=100, step_delay=3)
-bot.start()
+bot = TelegramUserBot()
+bot.run()
 ```
 
 ---
@@ -103,18 +125,25 @@ bot.start()
 - 右侧：消息区域
 - 底部：输入框 + 绿色发送按钮
 
-### Telegram Web
+### Telegram 用户账号模式
 
-**登录方式**: 手机号 + 验证码
+**登录方式**: 用户自己的 Telegram 账号 + Telethon session
 
-1. 启动后浏览器打开 web.telegram.org/k/
-2. **输入手机号** → 接收验证码 → 输入验证码
-3. 登录成功后开始监控
+1. 启动 `python run.py` 或 `python main.py telegram --transport user`
+2. 首次运行时补齐 `TELEGRAM_API_ID`、`TELEGRAM_API_HASH`、`target_chat`、人设和允许话题
+3. Telethon 会在终端中提示输入验证码；如果账号开启了二次密码，也会继续提示
+4. 登录成功后，session 会保存在 `data/telegram_sessions/`
+5. 机器人只监听指定聊天对象，并根据策略做被动回复和有限度的主动发起
 
-**界面特点**:
-- 左侧：聊天列表，带蓝色未读角标
-- 右侧：消息区域
-- 底部：输入框 + 纸飞机发送按钮
+**运行特点**:
+- 不依赖浏览器截图来收发 Telegram 消息
+- 会结合最近聊天记录、长期记忆和当前时间做决策
+- 消息在真正发出前还会再过一次审核
+- `target_chat` 支持用户名、ID，交互式启动时也可以尝试从最近聊天列表里选
+
+### Telegram Web（旧实验路径）
+
+仍可通过 `--transport web` 启动，但它是旧的视觉自动化路径，不再是推荐主方案。
 
 ---
 
@@ -131,6 +160,8 @@ im_bot/
 │   ├── __init__.py
 │   ├── config.py           # 全局配置
 │   ├── im_bot.py           # 机器人主类
+│   ├── launcher.py         # 统一启动分发
+│   ├── telegram_userbot.py # Telegram 用户账号主链路
 │   ├── browser_controller.py  # 浏览器控制
 │   ├── vision_agent.py     # Kimi 视觉分析
 │   │
@@ -138,7 +169,7 @@ im_bot/
 │   │   ├── __init__.py
 │   │   ├── base.py         # 基类
 │   │   ├── whatsapp.py     # WhatsApp 适配
-│   │   └── telegram.py     # Telegram 适配
+│   │   └── telegram.py     # Telegram Web 适配（旧路径）
 │   │
 │   └── utils/              # 工具
 │       ├── __init__.py
@@ -166,35 +197,33 @@ im_bot/
 | `--delay` | 每步间隔(秒) | 3 |
 | `--headless` | 无头模式 | False |
 | `--debug` | 调试日志 | False |
+| `--transport` | Telegram: auto/user/web | auto |
 
 ### 环境变量
 
 | 变量 | 说明 | 必需 |
 |-----|------|-----|
 | `KIMI_API_KEY` | Moonshot API Key | ✅ |
+| `TELEGRAM_API_ID` | Telegram 用户账号 API ID | Telegram 用户模式必需 |
+| `TELEGRAM_API_HASH` | Telegram 用户账号 API Hash | Telegram 用户模式必需 |
 | `LOG_LEVEL` | 日志级别 (DEBUG/INFO) | ❌ |
 | `BROWSER_HEADLESS` | 无头模式 | ❌ |
 
 ---
 
-## 🔧 自定义回复
+## 🔧 Telegram 用户账号模式怎么调
 
-编辑 `src/platforms/whatsapp.py` 或 `src/platforms/telegram.py` 中的 `generate_reply` 方法：
+优先修改配置里的这些字段：
 
-```python
-def generate_reply(self, message: str) -> str:
-    msg_lower = message.lower()
-    
-    # 自定义关键词回复
-    if "价格" in msg_lower:
-        return "请咨询官方客服获取最新价格 💰"
-    
-    if "投诉" in msg_lower:
-        return "非常抱歉，请提供订单号，我帮您处理 🙏"
-    
-    # 默认回复
-    return "收到您的消息！"
-```
+- `telegram_user.persona`
+- `telegram_user.relationship_context`
+- `telegram_user.response_style`
+- `telegram_user.allowed_topics`
+- `telegram_user.blocked_topics`
+- `telegram_user.proactive`
+- `telegram_user.safety_review`
+
+如果只是想先观察效果，可以把 `telegram_user.dry_run` 设为 `true`，这样只会打印拟发送内容，不会真正发消息。
 
 ---
 
@@ -266,6 +295,27 @@ python -m unittest tests.test_vision_agent
 
 ## 🔍 工作原理
 
+### Telegram 用户账号主链路
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    TelegramUserBot                         │
+│                                                             │
+│  Telethon 监听目标聊天  ──▶ 串行任务队列 ──▶ LLM 决策        │
+│                                            │                │
+│                                            ▼                │
+│                                      长期记忆/策略守卫      │
+│                                            │                │
+│                                            ▼                │
+│                                      发送前二次审核         │
+│                                            │                │
+│                                            ▼                │
+│                                       send_message          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 旧版 Web 视觉路径
+
 ```
 ┌──────────────────────────────────────────────────────┐
 │                    主循环 (IMBot)                     │
@@ -304,10 +354,11 @@ python -m unittest tests.test_vision_agent
 
 ## ⚠️ 注意事项
 
-1. **首次使用需要登录** - 机器人会等待你完成扫码/验证码
-2. **保持手机连接** - WhatsApp 需要手机在线
-3. **网络环境** - Telegram 可能需要科学上网
-4. **API 额度** - 注意 Kimi API 余额
+1. **Telegram 用户模式不是官方 Bot** - 它会登录你的真实账号，请务必谨慎设置允许话题和主动频率
+2. **首次登录需要验证码** - Telethon 会在终端里提示输入
+3. **WhatsApp 旧路径仍需手机连接** - 如果使用 Web 视觉方案，请保持手机在线
+4. **网络环境** - Telegram 连接可能受网络环境影响
+5. **API 额度** - 注意 Kimi API 余额
 
 ---
 
@@ -323,9 +374,15 @@ browser-use open https://www.google.com  # 测试
 - 检查 `KIMI_API_KEY` 是否设置
 - 确认 API Key 有余额
 
-### 登录失败？
-- WhatsApp: 确保手机网络正常
-- Telegram: 检查是否能正常接收验证码
+### Telegram 用户模式登录失败？
+- 检查 `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` 是否正确
+- 确认终端里能正常输入验证码或二次密码
+- 删除 `data/telegram_sessions/<session_name>*` 后重新登录
+
+### 找不到目标聊天？
+- 优先使用用户名或数值 ID
+- 交互式启动时可尝试读取最近聊天列表后按编号选择
+- 如果名称有歧义，程序会提示候选项
 
 ---
 

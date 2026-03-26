@@ -19,6 +19,8 @@ SCREENSHOT_DIR = BASE_DIR / "screenshots"
 LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data"
 CONFIG_FILE = DATA_DIR / "app_config.json"
+CONFIG_CENTER_HOST = "127.0.0.1"
+CONFIG_CENTER_PORT = 8765
 
 # 创建目录
 SCREENSHOT_DIR.mkdir(exist_ok=True)
@@ -38,6 +40,10 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
         "max_steps": 500,
         "step_delay": 3,
         "login_timeout": 120,
+        "target_chat_prepare_timeout": 45,
+        "target_chat_mode": "manual_lock",
+        "target_chat_dom_history_limit": 10,
+        "target_chat_use_llm": True,
         "debug": False,
         "target_chat_name": "",
     },
@@ -95,6 +101,7 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
                 "chat_item": ".chat",
                 "unread_badge": ".badge.unread",
                 "search_input": "input[type='text']",
+                "chat_header_title": "header h3, header .title, .chat-info h3, .chat-info .title",
                 "message_input": ".composer-input",
                 "send_button": ".btn-icon.send",
                 "message_bubble": ".message",
@@ -105,6 +112,49 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
                 "左侧是聊天列表，右侧是消息区域",
                 "K 版本 (web.telegram.org/k/) 比 A 版更稳定",
             ],
+        },
+    },
+    "telegram_user": {
+        "transport": "user",
+        "api_id": "",
+        "api_hash": "",
+        "phone_number": "",
+        "session_name": "telegram_user",
+        "target_chat": "",
+        "timezone_name": "Asia/Shanghai",
+        "history_limit": 20,
+        "max_message_chars": 180,
+        "persona": "你是一个自然、克制、有边界感的真实聊天对象，语气友好，不夸张，不油腻，不暴露自己是 AI。",
+        "relationship_context": "围绕既有关系自然聊天，尊重对方节奏，不追问，不施压。",
+        "response_style": "简洁、自然、像真人，优先承接最近上下文和当前时间语境。",
+        "allowed_topics": [
+            "日常寒暄",
+            "工作近况",
+            "生活安排",
+        ],
+        "blocked_topics": [
+            "投资建议",
+            "成人内容",
+            "政治争论",
+            "医疗诊断",
+        ],
+        "dry_run": False,
+        "manual_review": False,
+        "proactive": {
+            "enabled": True,
+            "cooldown_minutes": 240,
+            "min_idle_since_incoming_minutes": 180,
+            "max_daily_initiations": 3,
+            "active_hours_start": 9,
+            "active_hours_end": 21,
+            "poll_interval_seconds": 90,
+            "reply_delay_seconds": 3,
+        },
+        "safety_review": {
+            "enabled": True,
+            "max_risk": "medium",
+            "minimum_confidence": 0.55,
+            "block_if_topic_missing": True,
         },
     },
 }
@@ -162,6 +212,27 @@ CONFIG_SCHEMA: Dict[str, Any] = {
                 "type": "integer",
                 "label": "登录超时(秒)",
                 "description": "等待人工完成登录的超时时间",
+            },
+            "target_chat_prepare_timeout": {
+                "type": "integer",
+                "label": "手动打开目标聊天等待(秒)",
+                "description": "Telegram Web 自动定位失败后，给用户手动打开目标聊天窗口的等待时间。",
+            },
+            "target_chat_mode": {
+                "type": "enum",
+                "label": "目标聊天模式",
+                "description": "search_then_lock=先搜索再锁定；manual_lock=完全手动打开后锁定；current_window_only=只使用当前聊天窗口。",
+                "options": ["search_then_lock", "manual_lock", "current_window_only"],
+            },
+            "target_chat_dom_history_limit": {
+                "type": "integer",
+                "label": "DOM 历史消息数",
+                "description": "锁定聊天模式下，从页面 DOM 提取给文本模型的最近消息条数。",
+            },
+            "target_chat_use_llm": {
+                "type": "boolean",
+                "label": "锁定聊天使用文本模型",
+                "description": "开启后，Telegram Web 锁定聊天模式将使用文本模型基于最近消息生成回复。",
             },
             "debug": {
                 "type": "boolean",
@@ -303,6 +374,104 @@ CONFIG_SCHEMA: Dict[str, Any] = {
             },
         },
     },
+    "telegram_user": {
+        "title": "Telegram 用户账号",
+        "description": "基于 Telethon 的 Telegram 个人账号聊天配置",
+        "fields": {
+            "transport": {
+                "type": "enum",
+                "label": "Telegram 传输方式",
+                "description": "user 表示使用 Telethon 登录用户账号；web 表示旧的 Telegram Web 模式",
+                "options": ["user", "web"],
+            },
+            "api_id": {
+                "type": "string",
+                "label": "API ID",
+                "description": "Telegram 用户账号 API ID，也可被环境变量 TELEGRAM_API_ID 覆盖。",
+            },
+            "api_hash": {
+                "type": "string",
+                "label": "API Hash",
+                "description": "Telegram 用户账号 API Hash，也可被环境变量 TELEGRAM_API_HASH 覆盖。",
+                "secret": True,
+            },
+            "phone_number": {
+                "type": "string",
+                "label": "手机号",
+                "description": "可选。首次登录时可预填手机号。",
+            },
+            "session_name": {
+                "type": "string",
+                "label": "Session 名称",
+                "description": "Telethon session 文件名。",
+            },
+            "target_chat": {
+                "type": "string",
+                "label": "目标聊天",
+                "description": "目标用户名、备注名或 ID。",
+            },
+            "timezone_name": {
+                "type": "string",
+                "label": "时区",
+                "description": "用于主动发起与时间语义判断。",
+            },
+            "history_limit": {
+                "type": "integer",
+                "label": "历史条数",
+                "description": "发送给 LLM 的最近聊天条数。",
+            },
+            "max_message_chars": {
+                "type": "integer",
+                "label": "最大消息长度",
+                "description": "每条外发消息最大字符数。",
+            },
+            "persona": {
+                "type": "string",
+                "label": "人设",
+                "description": "LLM 必须遵守的人设设定。",
+            },
+            "relationship_context": {
+                "type": "string",
+                "label": "关系背景",
+                "description": "和对方的关系与聊天边界。",
+            },
+            "response_style": {
+                "type": "string",
+                "label": "回复风格",
+                "description": "整体语气和语言风格。",
+            },
+            "allowed_topics": {
+                "type": "json",
+                "label": "允许话题",
+                "description": "白名单话题数组。",
+            },
+            "blocked_topics": {
+                "type": "json",
+                "label": "禁止话题",
+                "description": "黑名单话题数组。",
+            },
+            "manual_review": {
+                "type": "boolean",
+                "label": "人工审核",
+                "description": "开启后，消息进入待审核草稿区，需在后台批准后才发送。",
+            },
+            "dry_run": {
+                "type": "boolean",
+                "label": "Dry Run",
+                "description": "开启后只打印拟发送内容，不真正发消息。",
+            },
+            "proactive": {
+                "type": "json",
+                "label": "主动配置",
+                "description": "主动发起频率、时间窗口和轮询间隔配置。",
+            },
+            "safety_review": {
+                "type": "json",
+                "label": "发送审核",
+                "description": "发送前的二次审核配置。",
+            },
+        },
+    },
 }
 
 
@@ -389,10 +558,27 @@ def get_config_schema() -> Dict[str, Any]:
     return config_manager.get_schema()
 
 
+def get_config_center_url(host: str = CONFIG_CENTER_HOST, port: int = CONFIG_CENTER_PORT) -> str:
+    """获取本地配置中心默认地址"""
+    return f"http://{host}:{port}"
+
+
 def resolve_kimi_api_key(config: Optional[Dict[str, Any]] = None) -> str:
     """环境变量优先，其次配置文件"""
     cfg = config or get_app_config()
     return os.getenv("KIMI_API_KEY", cfg["api"].get("kimi_api_key", ""))
+
+
+def resolve_telegram_api_id(config: Optional[Dict[str, Any]] = None) -> str:
+    """环境变量优先，其次配置文件"""
+    cfg = config or get_app_config()
+    return str(os.getenv("TELEGRAM_API_ID", cfg.get("telegram_user", {}).get("api_id", ""))).strip()
+
+
+def resolve_telegram_api_hash(config: Optional[Dict[str, Any]] = None) -> str:
+    """环境变量优先，其次配置文件"""
+    cfg = config or get_app_config()
+    return str(os.getenv("TELEGRAM_API_HASH", cfg.get("telegram_user", {}).get("api_hash", ""))).strip()
 
 
 def get_platform_settings(platform_name: str, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -414,6 +600,53 @@ def validate_config(config: Optional[Dict[str, Any]] = None):
         raise ValueError("\n".join(errors))
 
     return True
+
+
+def validate_telegram_user_config(config: Optional[Dict[str, Any]] = None):
+    """验证 Telegram 用户账号模式必需配置"""
+    cfg = config or get_app_config()
+    errors = []
+    telegram_user = cfg.get("telegram_user", {})
+
+    if not resolve_telegram_api_id(cfg):
+        errors.append("TELEGRAM_API_ID 未设置，请在环境变量或配置中心中填写")
+    if not resolve_telegram_api_hash(cfg):
+        errors.append("TELEGRAM_API_HASH 未设置，请在环境变量或配置中心中填写")
+    if not telegram_user.get("target_chat", "").strip():
+        errors.append("telegram_user.target_chat 未设置")
+    if not telegram_user.get("persona", "").strip():
+        errors.append("telegram_user.persona 未设置")
+
+    allowed_topics = telegram_user.get("allowed_topics", [])
+    if not isinstance(allowed_topics, list) or not any(str(item).strip() for item in allowed_topics):
+        errors.append("telegram_user.allowed_topics 不能为空")
+
+    if errors:
+        raise ValueError("\n".join(errors))
+
+    return True
+
+
+def get_missing_telegram_user_fields(config: Optional[Dict[str, Any]] = None) -> list[str]:
+    """列出 Telegram 用户账号模式尚未补齐的关键字段"""
+    cfg = config or get_app_config()
+    telegram_user = cfg.get("telegram_user", {})
+    missing = []
+
+    if not resolve_telegram_api_id(cfg):
+        missing.append("api_id")
+    if not resolve_telegram_api_hash(cfg):
+        missing.append("api_hash")
+    if not telegram_user.get("target_chat", "").strip():
+        missing.append("target_chat")
+    if not telegram_user.get("persona", "").strip():
+        missing.append("persona")
+
+    allowed_topics = telegram_user.get("allowed_topics", [])
+    if not isinstance(allowed_topics, list) or not any(str(item).strip() for item in allowed_topics):
+        missing.append("allowed_topics")
+
+    return missing
 
 
 # 兼容旧代码的常量快照

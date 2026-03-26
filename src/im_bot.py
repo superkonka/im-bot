@@ -6,15 +6,22 @@ IM 机器人主类
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 from .browser_controller import BrowserController
+from .dom_chat_agent import DOMChatAgent, DOMChatMemory, DOMChatMemoryStore
 from .vision_agent import KimiVisionAgent, ActionDecision
 from .platforms import get_platform, BasePlatform
 from .utils.logger import logger
 from .utils.helpers import truncate_string
 from .config import (
-    SCREENSHOT_DIR, DEFAULT_MAX_STEPS, DEFAULT_STEP_DELAY, get_app_config
+    SCREENSHOT_DIR, DEFAULT_MAX_STEPS, DEFAULT_STEP_DELAY, get_app_config, get_config_center_url
+)
+from .runtime_control import (
+    OperatorControlStore,
+    RuntimeDashboard,
+    RuntimeDashboardStore,
+    get_runtime_store_paths,
 )
 
 
@@ -35,15 +42,35 @@ class IMBot:
         self.step_delay = step_delay
         self.login_timeout = app_config["runtime"]["login_timeout"]
         self.target_chat_name = app_config["runtime"].get("target_chat_name", "").strip()
+        self.target_chat_prepare_timeout = int(app_config["runtime"].get("target_chat_prepare_timeout", 45))
+        self.target_chat_mode = app_config["runtime"].get("target_chat_mode", "search_then_lock")
+        self.target_chat_dom_history_limit = int(app_config["runtime"].get("target_chat_dom_history_limit", 10))
+        self.target_chat_use_llm = bool(app_config["runtime"].get("target_chat_use_llm", True))
         self.last_seen_incoming_text = ""
         self.last_sent_reply = ""
         self.target_chat_open_failures = 0
         self.max_target_chat_open_failures = 3
         self.manual_target_chat_mode = False
+        self.manual_target_chat_prompted = False
+        self.locked_chat_title = ""
+        self.last_locked_at = ""
+        self.chat_memory = DOMChatMemory()
         
         # 组件
         self.browser = BrowserController(headless=headless)
         self.vision = KimiVisionAgent()
+        self.dom_chat_agent = DOMChatAgent(platform_name=platform) if self.target_chat_use_llm else None
+        self.dom_chat_memory_store = DOMChatMemoryStore(platform_name=platform)
+        runtime_path, control_path = get_runtime_store_paths(f"{platform}_web")
+        self.runtime_store = RuntimeDashboardStore(runtime_path)
+        self.control_store = OperatorControlStore(control_path)
+        self.runtime = self.runtime_store.load(
+            session_name=f"{platform}_web",
+            target_chat=self.target_chat_name,
+        )
+        self.runtime.transport = "web"
+        self.runtime.lock_mode = self.target_chat_mode
+        self.runtime.target_chat = self.target_chat_name
         
         # 设置系统提示词
         self.vision.set_system_prompt(self.platform.get_system_prompt())
@@ -63,6 +90,8 @@ class IMBot:
         logger.info(f"登录方式: {self.platform.config.login_method}")
         logger.info(f"最大步数: {self.max_steps}")
         logger.info(f"步进延迟: {self.step_delay}s")
+        logger.info(f"配置中心 / 运行后台地址: {get_config_center_url()}（需先运行 python config_center.py）")
+        self._update_runtime(status="starting")
         
         # 显示提示
         logger.info("使用提示:")
@@ -78,7 +107,7 @@ class IMBot:
                 logger.error("登录失败，退出")
                 return
 
-            if self.target_chat_name:
+            if self._should_use_target_chat_flow():
                 self._prepare_target_chat()
             
             # 主循环
@@ -89,6 +118,7 @@ class IMBot:
         except Exception as e:
             logger.error(f"运行错误: {e}")
         finally:
+            self._update_runtime(status="stopped")
             self.stop()
     
     def stop(self) -> None:
@@ -103,6 +133,7 @@ class IMBot:
         logger.info("初始化浏览器...")
         self.browser.open(self.platform.config.url, wait=5)
         logger.info("浏览器已打开")
+        self._update_runtime(status="running")
     
     def _wait_for_login(self) -> bool:
         """等待用户完成登录"""
@@ -147,8 +178,13 @@ class IMBot:
             
             logger.info(f"\n{'─' * 60}")
             logger.info(f"[步骤 {self.step}/{self.max_steps}] {datetime.now().strftime('%H:%M:%S')}")
+
+            if not self._apply_runtime_controls():
+                logger.info("后台已暂停 Web 自动化，等待恢复")
+                time.sleep(self.step_delay)
+                continue
             
-            if self.target_chat_name:
+            if self._should_use_target_chat_flow():
                 result = self._handle_target_chat_step()
                 logger.info(f"✅ 结果: {truncate_string(str(result), 80)}")
                 time.sleep(self.step_delay)
@@ -233,23 +269,40 @@ class IMBot:
 
     def _prepare_target_chat(self) -> None:
         """登录后准备指定聊天"""
-        logger.info(f"指定聊天模式已启用: {self.target_chat_name}")
-        if not self._open_target_chat():
+        logger.info(f"指定聊天模式已启用: {self._target_chat_label()}")
+        if self.target_chat_mode in {"manual_lock", "current_window_only"} or not self.target_chat_name:
             if self._can_use_current_chat_window():
-                self.manual_target_chat_mode = True
-                logger.warning(f"未能自动打开 {self.target_chat_name}，继续使用当前已打开的聊天窗口")
+                self._lock_current_chat_window()
                 return
 
-            logger.warning(f"未能直接打开指定聊天: {self.target_chat_name}")
+            if self._wait_for_manual_target_chat_selection():
+                return
+
+            logger.warning("当前页面还没有进入可聊天窗口")
+            return
+
+        if not self._open_target_chat():
+            if self._can_use_current_chat_window():
+                self._lock_current_chat_window()
+                logger.warning(f"未能自动打开 {self._target_chat_label()}，继续使用当前已打开的聊天窗口")
+                return
+
+            if self._wait_for_manual_target_chat_selection():
+                return
+
+            logger.warning(f"未能直接打开指定聊天: {self._target_chat_label()}")
             return
 
         self.target_chat_open_failures = 0
         latest_text = self._read_latest_chat_text()
+        self.locked_chat_title = self._resolve_current_chat_title()
+        self._load_chat_memory()
         if latest_text:
             self.last_seen_incoming_text = latest_text
             logger.info(f"已锁定聊天窗口，当前最新消息: {truncate_string(latest_text, 80)}")
         else:
             logger.info("已打开聊天窗口，但暂未读取到消息文本")
+        self._update_runtime()
 
     def _handle_target_chat_step(self) -> str:
         """处理指定聊天的自动回复逻辑"""
@@ -262,43 +315,54 @@ class IMBot:
                 self.target_chat_open_failures += 1
 
                 if self._can_use_current_chat_window():
-                    self.manual_target_chat_mode = True
-                    logger.warning(f"未自动定位到 {self.target_chat_name}，切换为当前聊天窗口模式")
+                    self._lock_current_chat_window()
+                    logger.warning(f"未自动定位到 {self._target_chat_label()}，切换为当前聊天窗口模式")
+                elif (not self.manual_target_chat_prompted) and self._wait_for_manual_target_chat_selection():
+                    return f"已手动锁定当前聊天窗口: {self._target_chat_label()}"
                 elif self.target_chat_open_failures >= self.max_target_chat_open_failures:
                     self.is_running = False
                     return (
                         f"连续 {self.target_chat_open_failures} 次未找到指定聊天: "
-                        f"{self.target_chat_name}，已停止轮询"
+                        f"{self._target_chat_label()}，已停止轮询"
                     )
                 else:
-                    return f"未找到指定聊天: {self.target_chat_name}"
+                    return f"未找到指定聊天: {self._target_chat_label()}"
             else:
                 self.target_chat_open_failures = 0
 
         latest_text = self._read_latest_chat_text()
         if not latest_text:
+            self._update_runtime()
             return "未读取到聊天内容"
 
         if not self.last_seen_incoming_text:
             self.last_seen_incoming_text = latest_text
+            self._update_runtime()
             return f"初始化最新消息: {truncate_string(latest_text, 80)}"
 
         if latest_text == self.last_sent_reply:
+            self._update_runtime()
             return f"最新消息是机器人刚发送的回复: {truncate_string(latest_text, 80)}"
 
         if latest_text == self.last_seen_incoming_text:
+            self._update_runtime()
             return f"暂无新消息: {truncate_string(latest_text, 80)}"
 
-        reply = self.platform.generate_reply(latest_text)
+        history = self._read_recent_chat_history()
+        self._maybe_refresh_chat_memory(history)
+        reply = self._generate_target_chat_reply(latest_text, history)
         logger.info(f"💬 最新消息: {truncate_string(latest_text, 80)}")
         logger.info(f"🤖 自动回复: {truncate_string(reply, 80)}")
 
         if self._send_reply(reply):
             self.last_seen_incoming_text = latest_text
             self.last_sent_reply = reply
-            return f"已回复指定聊天: {self.target_chat_name}"
+            self.runtime.note_message("assistant", reply, datetime.now().strftime("%Y-%m-%d %H:%M"))
+            self._update_runtime()
+            return f"已回复指定聊天: {self._target_chat_label()}"
 
         self.last_seen_incoming_text = latest_text
+        self._update_runtime(error="回复发送失败")
         return "回复发送失败"
 
     def _open_target_chat(self) -> bool:
@@ -342,8 +406,194 @@ class IMBot:
                     logger.info("通过搜索结果文本匹配打开成功")
                     return True
 
+                if self.browser.click_visible_text_via_js(
+                    self.target_chat_name,
+                    wait=1,
+                    left_panel_only=True,
+                ) and self._can_use_current_chat_window():
+                    logger.info("通过左侧搜索结果 JS 点击打开成功")
+                    return True
+
+                keyboard_selected = False
+                if self.browser.press_key("ArrowDown", wait=1):
+                    keyboard_selected = self.browser.press_key("Enter", wait=1)
+                if keyboard_selected and self._can_use_current_chat_window():
+                    logger.info("通过搜索结果键盘选择打开成功")
+                    return True
+
+                if self.browser.press_key("Enter", wait=1) and self._can_use_current_chat_window():
+                    logger.info("通过搜索框回车打开成功")
+                    return True
+
         logger.warning(f"仍未找到指定聊天: {self.target_chat_name}")
         return False
+
+    def _wait_for_manual_target_chat_selection(self) -> bool:
+        """等待用户手动打开目标聊天窗口，再锁定当前聊天"""
+        if self.manual_target_chat_prompted:
+            return False
+
+        self.manual_target_chat_prompted = True
+        timeout_seconds = max(self.target_chat_prepare_timeout, 5)
+        waited = 0
+        check_interval = 3
+
+        logger.warning(
+            f"未能自动定位到 {self._target_chat_label()}，请在 {timeout_seconds} 秒内手动打开目标聊天窗口"
+        )
+
+        while waited < timeout_seconds:
+            if not self.browser.is_page_alive():
+                return False
+
+            if self._can_use_current_chat_window():
+                self.manual_target_chat_mode = True
+                self.target_chat_open_failures = 0
+                self.locked_chat_title = self._resolve_current_chat_title()
+                self.last_locked_at = datetime.now().isoformat()
+                self._load_chat_memory()
+                latest_text = self._read_latest_chat_text()
+                if latest_text:
+                    self.last_seen_incoming_text = latest_text
+                logger.info(f"已锁定当前手动打开的聊天窗口: {self._target_chat_label()}")
+                self._update_runtime()
+                return True
+
+            time.sleep(check_interval)
+            waited += check_interval
+            if waited % 9 == 0:
+                logger.info(f"等待手动打开目标聊天... ({waited}/{timeout_seconds}s)")
+
+        logger.warning("等待手动打开目标聊天超时")
+        return False
+
+    def _lock_current_chat_window(self) -> None:
+        """将当前页面视为已锁定聊天窗口"""
+        self.manual_target_chat_mode = True
+        self.target_chat_open_failures = 0
+        self.locked_chat_title = self._resolve_current_chat_title()
+        self.last_locked_at = datetime.now().isoformat()
+        self._load_chat_memory()
+        latest_text = self._read_latest_chat_text()
+        if latest_text:
+            self.last_seen_incoming_text = latest_text
+            self.runtime.note_message("user", latest_text, datetime.now().strftime("%Y-%m-%d %H:%M"))
+        self._update_runtime()
+
+    def _read_recent_chat_history(self) -> List[Dict[str, str]]:
+        """从 DOM 读取最近消息，压缩后提供给文本模型"""
+        selector = self.platform.config.selectors.get("message_bubble", "")
+        if not selector:
+            return []
+
+        items = self.browser.get_message_items(selector, limit=self.target_chat_dom_history_limit)
+        history: List[Dict[str, str]] = []
+        for item in items:
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            role = str(item.get("role", "unknown")).strip().lower() or "unknown"
+            if role == "unknown" and self.last_sent_reply and text == self.last_sent_reply:
+                role = "assistant"
+            elif role == "unknown":
+                role = "user"
+            history.append({"role": role, "text": text})
+        return history
+
+    def _generate_target_chat_reply(self, latest_text: str, history: List[Dict[str, str]]) -> str:
+        """优先使用轻量文本模型基于 DOM 历史生成回复"""
+        if self.dom_chat_agent is None:
+            return self.platform.generate_reply(latest_text)
+
+        result = self.dom_chat_agent.generate_reply(
+            latest_message=latest_text,
+            history=history,
+            target_label=self._chat_memory_label(),
+            memory=self.chat_memory,
+            fallback_reply=lambda: self.platform.generate_reply(latest_text),
+        )
+        if result.reason:
+            logger.info(f"DOM 回复来源: {result.source} / {truncate_string(result.reason, 80)}")
+        return result.message
+
+    def _load_chat_memory(self) -> None:
+        """加载当前锁定聊天的本地记忆"""
+        label = self._chat_memory_label().strip()
+        if not label:
+            self.chat_memory = DOMChatMemory()
+            return
+        self.chat_memory = self.dom_chat_memory_store.load(label)
+        if self.chat_memory.relationship_summary:
+            logger.info(f"已加载聊天记忆: {truncate_string(self.chat_memory.relationship_summary, 80)}")
+        self._update_runtime()
+
+    def _maybe_refresh_chat_memory(self, history: List[Dict[str, str]]) -> None:
+        """必要时刷新当前聊天的长期记忆"""
+        if self.dom_chat_agent is None:
+            return
+        if not self.manual_target_chat_mode:
+            return
+        if len(history) < 4:
+            return
+
+        should_refresh = (
+            not self.chat_memory.last_refreshed_at
+            or len(history) >= self.chat_memory.source_message_count + 4
+        )
+        if not should_refresh:
+            return
+
+        self.chat_memory = self.dom_chat_agent.summarize_history(
+            history=history,
+            target_label=self._chat_memory_label(),
+            existing_memory=self.chat_memory,
+        )
+        self.dom_chat_memory_store.save(self.chat_memory)
+        if self.chat_memory.relationship_summary:
+            logger.info(f"已刷新聊天记忆: {truncate_string(self.chat_memory.relationship_summary, 80)}")
+        self._update_runtime()
+
+    def _resolve_current_chat_title(self) -> str:
+        """尽量从当前聊天窗口顶部识别真实聊天标题"""
+        selector = self.platform.config.selectors.get("chat_header_title", "")
+        candidates: List[str] = []
+        if selector:
+            text = self.browser.get_first_text_by_selector(selector)
+            if text:
+                candidates.append(text)
+
+        candidates.extend([self.locked_chat_title, self.target_chat_name, "当前已锁定聊天"])
+        ignored = {"telegram web", "messages", "chats", "all chats"}
+        for candidate in candidates:
+            normalized = candidate.strip()
+            if not normalized:
+                continue
+            if normalized.lower() in ignored:
+                continue
+            return normalized
+        return "当前已锁定聊天"
+
+    def _should_use_target_chat_flow(self) -> bool:
+        """是否启用锁定聊天窗口模式"""
+        if self.target_chat_name:
+            return True
+        return self.target_chat_mode in {"manual_lock", "current_window_only"}
+
+    def _target_chat_label(self) -> str:
+        """展示用聊天标签"""
+        if self.locked_chat_title:
+            return self.locked_chat_title
+        if self.target_chat_name:
+            return self.target_chat_name
+        return "当前已锁定聊天"
+
+    def _chat_memory_label(self) -> str:
+        """记忆持久化使用的聊天标签"""
+        if self.locked_chat_title:
+            return self.locked_chat_title
+        if self.target_chat_name:
+            return self.target_chat_name
+        return "当前已锁定聊天"
 
     def _can_use_current_chat_window(self) -> bool:
         """当前页面是否已经处于可聊天状态，可作为人工打开的目标聊天窗口使用"""
@@ -370,6 +620,48 @@ class IMBot:
                 return normalized
 
         return ""
+
+    def _apply_runtime_controls(self) -> bool:
+        """同步后台控制状态，并处理 Web 模式下的控制命令"""
+        automation_paused, proactive_paused, commands = self.control_store.pop_commands()
+        self.runtime.automation_paused = automation_paused
+        self.runtime.proactive_paused = proactive_paused
+
+        for command in commands:
+            if command.action == "clear_memory":
+                self._clear_current_chat_memory()
+                continue
+            logger.warning(f"Web 模式暂不支持命令: {command.action}")
+
+        self._update_runtime()
+        return not automation_paused
+
+    def _clear_current_chat_memory(self) -> None:
+        """清空当前锁定聊天的本地记忆"""
+        label = self._chat_memory_label().strip()
+        cleared = self.dom_chat_memory_store.clear(label) if label else False
+        self.chat_memory = DOMChatMemory(chat_label=label)
+        if cleared:
+            logger.info(f"已清空聊天记忆: {label}")
+        else:
+            logger.info(f"当前聊天没有可清空的历史记忆: {label or '未锁定聊天'}")
+        self._update_runtime()
+
+    def _update_runtime(self, status: Optional[str] = None, error: str = "") -> None:
+        """刷新 Web 模式运行状态，供后台展示"""
+        if status:
+            self.runtime.status = status
+        self.runtime.transport = "web"
+        self.runtime.lock_mode = self.target_chat_mode
+        self.runtime.target_chat = self.target_chat_name.strip() or self.locked_chat_title.strip()
+        self.runtime.locked = bool(self.manual_target_chat_mode and self.locked_chat_title.strip())
+        self.runtime.locked_chat_title = self.locked_chat_title.strip()
+        self.runtime.last_locked_at = self.last_locked_at
+        self.runtime.memory_summary = self.chat_memory.relationship_summary.strip()
+        self.runtime.memory_file = str(self.dom_chat_memory_store.path_for_chat(self._chat_memory_label()))
+        self.runtime.last_error = error
+        self.runtime.last_updated_at = datetime.now().isoformat()
+        self.runtime_store.save(self.runtime)
 
     def _send_reply(self, text: str) -> bool:
         """向当前聊天发送回复"""

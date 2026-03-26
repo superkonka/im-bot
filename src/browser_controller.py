@@ -6,7 +6,7 @@
 import time
 import asyncio
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from playwright.sync_api import sync_playwright, Page, Browser
 
@@ -268,6 +268,103 @@ class BrowserController:
         except Exception as e:
             logger.error(f"按选择器文本点击失败: {e}")
             return False
+
+    def click_visible_text_via_js(
+        self,
+        text: str,
+        wait: int = 2,
+        left_panel_only: bool = False,
+    ) -> bool:
+        """通过页面脚本点击可见文本，适合处理定位器不稳定的页面"""
+        logger.debug(f"通过 JS 点击文本: {text}")
+
+        if not self._page:
+            return False
+
+        try:
+            clicked = self._page.evaluate(
+                """
+                ({ needle, leftPanelOnly }) => {
+                  const normalizedNeedle = (needle || "").trim();
+                  if (!normalizedNeedle) return false;
+
+                  const isVisible = (el) => {
+                    if (!el || !(el instanceof Element)) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.visibility === "hidden" || style.display === "none") return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                  };
+
+                  const isLeftPanelCandidate = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    return rect.left >= 0 && rect.left < window.innerWidth * 0.42;
+                  };
+
+                  const clickableAncestor = (el) => {
+                    let current = el;
+                    while (current && current !== document.body) {
+                      const tag = (current.tagName || "").toLowerCase();
+                      if (
+                        current.getAttribute("role") === "button" ||
+                        ["a", "button"].includes(tag) ||
+                        typeof current.onclick === "function"
+                      ) {
+                        return current;
+                      }
+                      current = current.parentElement;
+                    }
+                    return el;
+                  };
+
+                  const candidates = Array.from(document.querySelectorAll("div, span, a, button"))
+                    .filter((el) => {
+                      if (!isVisible(el)) return false;
+                      if (leftPanelOnly && !isLeftPanelCandidate(el)) return false;
+                      const textValue = (el.innerText || "").trim();
+                      if (!textValue) return false;
+                      return textValue === normalizedNeedle || textValue.includes(normalizedNeedle);
+                    })
+                    .sort((a, b) => {
+                      const aRect = a.getBoundingClientRect();
+                      const bRect = b.getBoundingClientRect();
+                      if (aRect.top !== bRect.top) return aRect.top - bRect.top;
+                      return aRect.left - bRect.left;
+                    });
+
+                  for (const candidate of candidates) {
+                    const target = clickableAncestor(candidate);
+                    if (!isVisible(target)) continue;
+                    target.scrollIntoView({ block: "center", inline: "nearest" });
+                    const rect = target.getBoundingClientRect();
+                    const x = rect.left + Math.min(rect.width / 2, 24);
+                    const y = rect.top + rect.height / 2;
+                    const elementAtPoint = document.elementFromPoint(x, y);
+                    const clickTarget = elementAtPoint && target.contains(elementAtPoint) ? elementAtPoint : target;
+                    ["pointerdown", "mousedown", "mouseup", "click"].forEach((type) => {
+                      clickTarget.dispatchEvent(new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        composed: true,
+                        clientX: x,
+                        clientY: y,
+                      }));
+                    });
+                    return true;
+                  }
+
+                  return false;
+                }
+                """,
+                {"needle": text, "leftPanelOnly": left_panel_only},
+            )
+            if clicked:
+                time.sleep(wait)
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"JS 文本点击失败: {e}")
+            return False
     
     def type_text(self, text: str, wait: int = 1) -> bool:
         """在当前焦点元素输入文本"""
@@ -375,6 +472,60 @@ class BrowserController:
             logger.error(f"读取文本失败: {e}")
 
         return texts
+
+    def get_first_text_by_selector(self, selector: str) -> str:
+        """获取选择器匹配到的第一个非空文本"""
+        texts = self.get_texts_by_selector(selector)
+        for text in texts:
+            normalized = text.strip()
+            if normalized:
+                return normalized
+        return ""
+
+    def get_message_items(self, selector: str, limit: int = 12) -> List[Dict[str, Any]]:
+        """读取消息列表，并尽量推断消息角色"""
+        if not self._page:
+            return []
+
+        try:
+            payload = self._page.evaluate(
+                """
+                ({ selector, limit }) => {
+                  const nodes = Array.from(document.querySelectorAll(selector));
+                  return nodes
+                    .map((node) => {
+                      const text = (node.innerText || "").trim();
+                      if (!text) return null;
+
+                      const own = node.closest("[class]") || node;
+                      const markers = [
+                        typeof node.className === "string" ? node.className : "",
+                        typeof own.className === "string" ? own.className : "",
+                        node.getAttribute("data-testid") || "",
+                        node.getAttribute("aria-label") || "",
+                      ].join(" ").toLowerCase();
+
+                      let role = "unknown";
+                      if (/(own|outgoing|message-out|is-out|my-message|from-me)/.test(markers)) {
+                        role = "assistant";
+                      } else if (/(incoming|message-in|is-in|peer-message|from-peer)/.test(markers)) {
+                        role = "user";
+                      }
+
+                      return { text, role };
+                    })
+                    .filter(Boolean)
+                    .slice(-limit);
+                }
+                """,
+                {"selector": selector, "limit": max(limit, 1)},
+            )
+            if isinstance(payload, list):
+                return [item for item in payload if isinstance(item, dict)]
+        except Exception as e:
+            logger.error(f"读取消息列表失败: {e}")
+
+        return []
 
     def is_page_alive(self) -> bool:
         """页面是否仍然可用"""
