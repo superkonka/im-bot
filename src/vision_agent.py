@@ -3,6 +3,7 @@
 Kimi 视觉代理 - 分析截图并决策
 """
 import json
+import copy
 from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 from openai import OpenAI
@@ -77,6 +78,7 @@ class KimiVisionAgent:
         self.client = client or OpenAI(api_key=self.api_key, base_url=self.base_url)
         self.history = CircularBuffer(max_size=resolved_max_history)
         self.system_prompt = ""
+        self.last_analysis_debug: Dict[str, Any] = {}
         
     def set_system_prompt(self, prompt: str):
         """设置系统提示词"""
@@ -106,6 +108,14 @@ class KimiVisionAgent:
             
             # 构建消息
             messages = self._build_messages(base64_image, context)
+            self.last_analysis_debug = {
+                "screenshot_path": screenshot_path,
+                "context": context,
+                "messages": self._summarize_messages(messages),
+                "model": self.vision_model,
+                "temperature": self._normalize_temperature(resolved_temperature),
+                "max_tokens": self.decision_max_tokens,
+            }
             
             # 调用 Kimi API
             logger.debug("调用 Kimi API 分析截图...")
@@ -118,12 +128,15 @@ class KimiVisionAgent:
             
             content = response.choices[0].message.content
             logger.debug(f"Kimi 响应: {content[:200]}...")
+            self.last_analysis_debug["raw_response"] = content
             
             # 解析 JSON
             data = extract_json_from_text(content)
+            self.last_analysis_debug["parsed_json"] = data
             
             if data is None:
                 logger.warning("无法从响应中提取 JSON，使用默认决策")
+                self.last_analysis_debug["error"] = "Failed to parse JSON from response"
                 return ActionDecision(
                     action='wait',
                     params={'seconds': 3},
@@ -139,6 +152,11 @@ class KimiVisionAgent:
             
         except Exception as e:
             logger.error(f"分析截图失败: {e}")
+            self.last_analysis_debug = {
+                "screenshot_path": screenshot_path,
+                "context": context,
+                "error": str(e),
+            }
             return ActionDecision(
                 action='wait',
                 params={'seconds': 5},
@@ -405,3 +423,36 @@ class KimiVisionAgent:
     def clear_history(self):
         """清空历史"""
         self.history.clear()
+
+    def get_last_analysis_debug(self) -> Dict[str, Any]:
+        """获取最近一次视觉分析的调试快照"""
+        return copy.deepcopy(self.last_analysis_debug)
+
+    def _summarize_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """提取消息里的可读部分，避免把整张 base64 图片写进调试日志"""
+        summary: List[Dict[str, Any]] = []
+        for item in messages:
+            content = item.get("content")
+            if isinstance(content, list):
+                parts: List[Dict[str, Any]] = []
+                for part in content:
+                    if part.get("type") == "text":
+                        parts.append({
+                            "type": "text",
+                            "text": str(part.get("text", "")),
+                        })
+                    elif part.get("type") == "image_url":
+                        parts.append({
+                            "type": "image_url",
+                            "present": True,
+                        })
+                summary.append({
+                    "role": item.get("role", ""),
+                    "content": parts,
+                })
+            else:
+                summary.append({
+                    "role": item.get("role", ""),
+                    "content": str(content),
+                })
+        return summary

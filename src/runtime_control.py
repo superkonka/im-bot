@@ -76,6 +76,8 @@ class RuntimeDashboard:
     manual_review_enabled: bool = False
     last_error: str = ""
     last_decision: str = ""
+    debug_trace_file: str = ""
+    last_step_trace: str = ""
     last_updated_at: str = ""
     recent_messages: List[RuntimeMessage] = field(default_factory=list)
     pending_draft: Optional[PendingDraft] = None
@@ -98,6 +100,8 @@ class RuntimeDashboard:
             manual_review_enabled=bool(data.get("manual_review_enabled", False)),
             last_error=str(data.get("last_error", "")).strip(),
             last_decision=str(data.get("last_decision", "")).strip(),
+            debug_trace_file=str(data.get("debug_trace_file", "")).strip(),
+            last_step_trace=str(data.get("last_step_trace", "")).strip(),
             last_updated_at=str(data.get("last_updated_at", "")).strip(),
             recent_messages=[
                 RuntimeMessage.from_dict(item)

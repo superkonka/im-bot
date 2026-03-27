@@ -1,0 +1,78 @@
+{
+  "name": "Google搜索示例",
+  "description": "在Google上搜索关键词并点击第一个结果",
+  "start_url": "https://www.google.com",
+  "parameters": [
+    {
+      "name": "query",
+      "type": "string",
+      "default": "OpenAI",
+      "description": "搜索关键词",
+      "required": true
+    }
+  ],
+  "steps": [
+    {
+      "step_number": 1,
+      "step_type": "wait",
+      "params": {"seconds": 2},
+      "description": "等待页面加载",
+      "snapshot_path": "",
+      "dom_state": {},
+      "validation": {},
+      "retry_count": 3,
+      "retry_delay": 1
+    },
+    {
+      "step_number": 2,
+      "step_type": "input_by_selector",
+      "params": {"selector": "textarea[name='q']", "text": "${query}"},
+      "description": "在搜索框输入关键词",
+      "snapshot_path": "",
+      "dom_state": {},
+      "validation": {},
+      "retry_count": 3,
+      "retry_delay": 1
+    },
+    {
+      "step_number": 3,
+      "step_type": "press_key",
+      "params": {"key": "Enter"},
+      "description": "按回车搜索",
+      "snapshot_path": "",
+      "dom_state": {},
+      "validation": {
+        "url_contains": "search"
+      },
+      "retry_count": 3,
+      "retry_delay": 1
+    },
+    {
+      "step_number": 4,
+      "step_type": "wait",
+      "params": {"seconds": 3},
+      "description": "等待搜索结果",
+      "snapshot_path": "",
+      "dom_state": {},
+      "validation": {},
+      "retry_count": 3,
+      "retry_delay": 1
+    },
+    {
+      "step_number": 5,
+      "step_type": "done",
+      "params": {},
+      "description": "任务完成",
+      "snapshot_path": "",
+      "dom_state": {},
+      "validation": {},
+      "retry_count": 1,
+      "retry_delay": 1
+    }
+  ],
+  "created_at": "2026-03-27T14:00:00",
+  "updated_at": "2026-03-27T14:00:00",
+  "version": "1.0",
+  "author": "system",
+  "tags": ["example", "google", "search"]
+}

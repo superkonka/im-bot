@@ -3,10 +3,11 @@
 IM 机器人主类
 整合浏览器控制、视觉分析和平台适配
 """
+import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .browser_controller import BrowserController
 from .dom_chat_agent import DOMChatAgent, DOMChatMemory, DOMChatMemoryStore
@@ -80,6 +81,8 @@ class IMBot:
         self.is_running = False
         self.session_dir = SCREENSHOT_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.session_dir.mkdir(exist_ok=True)
+        self.debug_trace_path = self.session_dir / "debug_trace.jsonl"
+        self.runtime.debug_trace_file = str(self.debug_trace_path)
         
     def start(self) -> None:
         """启动机器人"""
@@ -196,15 +199,48 @@ class IMBot:
                 logger.error("截图失败，停止主循环")
                 break
 
+            visual_context, dom_payload = self._build_visual_context()
+            self._trace(
+                "capture",
+                {
+                    "screenshot_path": screenshot_path,
+                    "dom_summary": dom_payload,
+                },
+            )
+
             # 2. 决策
-            decision = self.vision.analyze_screenshot(screenshot_path)
+            decision = self.vision.analyze_screenshot(screenshot_path, context=visual_context)
+            self._trace(
+                "vision_analysis",
+                {
+                    "decision": decision.to_dict(),
+                    "vision_debug": self.vision.get_last_analysis_debug(),
+                },
+            )
             
             logger.info(f"🧠 决策: {truncate_string(decision.reason, 60)}")
             logger.info(f"🎯 操作: {decision.action} {decision.params}")
+            self.runtime.last_decision = truncate_string(
+                f"{decision.action} {decision.params} / {decision.reason}",
+                180,
+            )
             
             # 3. 执行
             result = self._execute_decision(decision)
             logger.info(f"✅ 结果: {truncate_string(str(result), 80)}")
+            self.runtime.last_decision = truncate_string(
+                f"{decision.action} {decision.params} / {decision.reason} -> {result}",
+                180,
+            )
+            self._trace(
+                "execution_result",
+                {
+                    "decision": decision.to_dict(),
+                    "result": result,
+                    "browser_debug": self.browser.get_last_action_debug(),
+                },
+            )
+            self._update_runtime(error="" if not str(result).startswith("Error:") else str(result))
             
             # 4. 检查是否完成
             if decision.action == 'done':
@@ -252,9 +288,24 @@ class IMBot:
         handler = handlers.get(action)
         if handler:
             try:
+                self._trace(
+                    "execution_start",
+                    {
+                        "action": action,
+                        "params": params,
+                    },
+                )
                 return str(handler())
             except Exception as e:
                 logger.error(f"执行操作失败: {e}")
+                self._trace(
+                    "execution_error",
+                    {
+                        "action": action,
+                        "params": params,
+                        "error": str(e),
+                    },
+                )
                 return f"Error: {e}"
         else:
             return f"未知操作: {action}"
@@ -369,64 +420,138 @@ class IMBot:
         """优先使用聊天项选择器打开指定聊天"""
         chat_item_selector = self.platform.config.selectors.get("chat_item", "")
         search_input_selector = self.platform.config.selectors.get("search_input", "")
+        attempt_log: Dict[str, Any] = {
+            "target_chat_name": self.target_chat_name,
+            "chat_item_selector": chat_item_selector,
+            "search_input_selector": search_input_selector,
+            "chat_item_candidates": self.browser.find_text_candidates(
+                self.target_chat_name,
+                selector=chat_item_selector,
+                limit=8,
+            ) if chat_item_selector else [],
+            "global_candidates": self.browser.find_text_candidates(
+                self.target_chat_name,
+                limit=8,
+            ),
+            "left_panel_candidates": self.browser.find_text_candidates(
+                self.target_chat_name,
+                limit=8,
+                left_panel_only=True,
+            ),
+            "attempts": [],
+        }
 
         logger.info(f"尝试打开指定聊天: {self.target_chat_name}")
 
-        if chat_item_selector and self.browser.click_selector_by_text(
-            chat_item_selector,
-            self.target_chat_name,
-            wait=1,
-            timeout_ms=2500
-        ):
-            logger.info("通过聊天项选择器打开成功")
-            return True
+        def record_attempt(strategy: str, success: bool) -> bool:
+            browser_debug = self.browser.get_last_action_debug()
+            attempt_log["attempts"].append({
+                "strategy": strategy,
+                "success": success,
+                "browser_debug": browser_debug,
+            })
+            self.runtime.last_decision = truncate_string(
+                f"打开聊天 {self.target_chat_name}: {strategy} -> {'success' if success else 'failed'}",
+                180,
+            )
+            return success
 
-        if self.browser.click_by_text(self.target_chat_name, wait=1, timeout_ms=2500):
+        def finish(success: bool, matched_strategy: str = "") -> bool:
+            attempt_log["success"] = success
+            attempt_log["matched_strategy"] = matched_strategy
+            status_text = "success" if success else "failed"
+            strategy_text = matched_strategy or "all_strategies"
+            self.runtime.last_decision = truncate_string(
+                f"打开聊天 {self.target_chat_name}: {strategy_text} -> {status_text}",
+                180,
+            )
+            self._trace("target_chat_open", attempt_log)
+            self._update_runtime()
+            return success
+
+        if chat_item_selector:
+            success = self.browser.click_selector_by_text(
+                chat_item_selector,
+                self.target_chat_name,
+                wait=1,
+                timeout_ms=2500
+            )
+            if record_attempt("click_selector_by_text", success):
+                logger.info("通过聊天项选择器打开成功")
+                return finish(True, "click_selector_by_text")
+
+        success = self.browser.click_by_text(self.target_chat_name, wait=1, timeout_ms=2500)
+        if record_attempt("click_by_text", success):
             logger.info("通过页面文本匹配打开成功")
-            return True
+            return finish(True, "click_by_text")
 
         if search_input_selector:
             logger.info("聊天项未命中，尝试通过搜索框定位聊天")
-            if self.browser.input_by_selector(
+            success = self.browser.input_by_selector(
                 search_input_selector,
                 self.target_chat_name,
                 wait=1,
                 timeout_ms=2500
-            ):
+            )
+            attempt_log["attempts"].append({
+                "strategy": "input_by_selector",
+                "success": success,
+                "selector": search_input_selector,
+                "browser_debug": self.browser.get_last_action_debug(),
+            })
+            if success:
                 if chat_item_selector and self.browser.click_selector_by_text(
                     chat_item_selector,
                     self.target_chat_name,
                     wait=1,
                     timeout_ms=2500
                 ):
+                    record_attempt("search_then_click_selector_by_text", True)
                     logger.info("通过搜索结果聊天项打开成功")
-                    return True
+                    return finish(True, "search_then_click_selector_by_text")
+                elif chat_item_selector:
+                    record_attempt("search_then_click_selector_by_text", False)
 
                 if self.browser.click_by_text(self.target_chat_name, wait=1, timeout_ms=2500):
+                    record_attempt("search_then_click_by_text", True)
                     logger.info("通过搜索结果文本匹配打开成功")
-                    return True
+                    return finish(True, "search_then_click_by_text")
+                record_attempt("search_then_click_by_text", False)
 
                 if self.browser.click_visible_text_via_js(
                     self.target_chat_name,
                     wait=1,
                     left_panel_only=True,
                 ) and self._can_use_current_chat_window():
+                    record_attempt("search_then_click_visible_text_via_js", True)
                     logger.info("通过左侧搜索结果 JS 点击打开成功")
-                    return True
+                    return finish(True, "search_then_click_visible_text_via_js")
+                record_attempt("search_then_click_visible_text_via_js", False)
 
                 keyboard_selected = False
                 if self.browser.press_key("ArrowDown", wait=1):
                     keyboard_selected = self.browser.press_key("Enter", wait=1)
+                attempt_log["attempts"].append({
+                    "strategy": "search_then_keyboard_select",
+                    "success": keyboard_selected and self._can_use_current_chat_window(),
+                    "browser_debug": self.browser.get_last_action_debug(),
+                })
                 if keyboard_selected and self._can_use_current_chat_window():
                     logger.info("通过搜索结果键盘选择打开成功")
-                    return True
+                    return finish(True, "search_then_keyboard_select")
 
-                if self.browser.press_key("Enter", wait=1) and self._can_use_current_chat_window():
+                enter_opened = self.browser.press_key("Enter", wait=1) and self._can_use_current_chat_window()
+                attempt_log["attempts"].append({
+                    "strategy": "search_then_press_enter",
+                    "success": enter_opened,
+                    "browser_debug": self.browser.get_last_action_debug(),
+                })
+                if enter_opened:
                     logger.info("通过搜索框回车打开成功")
-                    return True
+                    return finish(True, "search_then_press_enter")
 
         logger.warning(f"仍未找到指定聊天: {self.target_chat_name}")
-        return False
+        return finish(False)
 
     def _wait_for_manual_target_chat_selection(self) -> bool:
         """等待用户手动打开目标聊天窗口，再锁定当前聊天"""
@@ -660,6 +785,7 @@ class IMBot:
         self.runtime.memory_summary = self.chat_memory.relationship_summary.strip()
         self.runtime.memory_file = str(self.dom_chat_memory_store.path_for_chat(self._chat_memory_label()))
         self.runtime.last_error = error
+        self.runtime.debug_trace_file = str(getattr(self, "debug_trace_path", "") or "")
         self.runtime.last_updated_at = datetime.now().isoformat()
         self.runtime_store.save(self.runtime)
 
@@ -679,3 +805,71 @@ class IMBot:
             return True
 
         return self.browser.press_key("Enter", wait=1)
+
+    def _build_visual_context(self) -> tuple[str, Dict[str, Any]]:
+        """组合给视觉模型的 DOM 过滤摘要，同时保留结构化调试信息"""
+        state = self.browser.get_state()
+        clickable = state.get_clickable_elements()
+        inputs = state.get_input_elements()
+        elements = []
+        for element in state.elements[:20]:
+            elements.append({
+                "index": element.index,
+                "tag": element.tag,
+                "text": element.text,
+                "clickable": element.clickable,
+                "input_field": element.input_field,
+                "selector": element.selector,
+                "selector_index": getattr(element, "selector_index", 0),
+            })
+
+        lines = [
+            f"页面 URL: {state.url or '-'}",
+            f"页面标题: {state.title or '-'}",
+            f"DOM 统计: 共 {len(state.elements)} 个候选元素，可点击 {len(clickable)} 个，输入框 {len(inputs)} 个",
+            "前 20 个候选元素:",
+        ]
+        if elements:
+            for item in elements:
+                marker = []
+                if item["clickable"]:
+                    marker.append("clickable")
+                if item["input_field"]:
+                    marker.append("input")
+                marker_text = ",".join(marker) or "plain"
+                lines.append(
+                    f"- #{item['index']} [{marker_text}] {item['tag']} text={item['text']!r} "
+                    f"selector={item['selector']}[{item['selector_index']}]"
+                )
+        else:
+            lines.append("- 无可读 DOM 候选元素")
+
+        payload = {
+            "url": state.url,
+            "title": state.title,
+            "element_count": len(state.elements),
+            "clickable_count": len(clickable),
+            "input_count": len(inputs),
+            "elements": elements,
+        }
+        return "\n".join(lines), payload
+
+    def _trace(self, stage: str, payload: Dict[str, Any]) -> None:
+        """写入结构化调试轨迹，便于定位每一轮卡在哪个节点"""
+        trace_path = getattr(self, "debug_trace_path", None)
+        if not trace_path:
+            return
+
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        event = {
+            "timestamp": datetime.now().isoformat(),
+            "step": self.step,
+            "stage": stage,
+            "payload": payload,
+        }
+        with trace_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        self.runtime.last_step_trace = truncate_string(
+            f"{stage}: {json.dumps(payload, ensure_ascii=False)}",
+            240,
+        )

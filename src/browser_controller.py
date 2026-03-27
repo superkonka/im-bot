@@ -23,6 +23,7 @@ class Element:
     clickable: bool = False
     input_field: bool = False
     selector: str = ""
+    selector_index: int = 0
 
 
 @dataclass
@@ -60,6 +61,7 @@ class BrowserController:
         self._playwright = None
         self._browser: Optional[Browser] = None
         self._page: Optional[Page] = None
+        self.last_action_debug: Dict[str, Any] = {}
         
     def open(self, url: str, wait: int = 3) -> bool:
         """打开网页"""
@@ -154,7 +156,7 @@ class BrowserController:
             for selector in selectors:
                 try:
                     locators = self._page.locator(selector).all()
-                    for loc in locators:
+                    for selector_index, loc in enumerate(locators):
                         try:
                             if loc.is_visible() and loc.is_enabled():
                                 text = loc.inner_text() or loc.get_attribute('aria-label') or ""
@@ -169,7 +171,8 @@ class BrowserController:
                                     text=text,
                                     clickable=is_clickable,
                                     input_field=is_input,
-                                    selector=selector
+                                    selector=selector,
+                                    selector_index=selector_index
                                 ))
                                 idx += 1
                         except:
@@ -194,16 +197,34 @@ class BrowserController:
             state = self.get_state()
             if 1 <= index <= len(state.elements):
                 element = state.elements[index - 1]
-                # 使用 JavaScript 点击
-                self._page.evaluate(f"document.querySelectorAll('{element.selector}')[{index-1}].click()")
+                locator = self._page.locator(element.selector).nth(element.selector_index)
+                locator.click(timeout=self.timeout * 1000)
+                self._set_last_action_debug(
+                    action="click",
+                    success=True,
+                    index=index,
+                    element=self._serialize_element(element),
+                )
                 time.sleep(wait)
                 return True
             else:
                 logger.warning(f"元素索引 {index} 超出范围")
+                self._set_last_action_debug(
+                    action="click",
+                    success=False,
+                    index=index,
+                    error=f"元素索引 {index} 超出范围",
+                )
                 return False
                 
         except Exception as e:
             logger.error(f"点击失败: {e}")
+            self._set_last_action_debug(
+                action="click",
+                success=False,
+                index=index,
+                error=str(e),
+            )
             return False
     
     def click_by_text(self, text: str, wait: int = 2, timeout_ms: int = 3000) -> bool:
@@ -214,9 +235,17 @@ class BrowserController:
             return False
         
         try:
+            candidates = self.find_text_candidates(text, limit=8)
             # 尝试多种方式点击
             try:
                 self._page.get_by_text(text, exact=False).click(timeout=timeout_ms)
+                self._set_last_action_debug(
+                    action="click_by_text",
+                    success=True,
+                    text=text,
+                    strategy="get_by_text",
+                    candidates=candidates,
+                )
                 time.sleep(wait)
                 return True
             except:
@@ -225,15 +254,35 @@ class BrowserController:
             # 使用 contains 文本
             try:
                 self._page.locator(f"text={text}").first.click(timeout=timeout_ms)
+                self._set_last_action_debug(
+                    action="click_by_text",
+                    success=True,
+                    text=text,
+                    strategy="locator_text",
+                    candidates=candidates,
+                )
                 time.sleep(wait)
                 return True
             except:
                 pass
             
+            self._set_last_action_debug(
+                action="click_by_text",
+                success=False,
+                text=text,
+                strategy="all_failed",
+                candidates=candidates,
+            )
             return False
             
         except Exception as e:
             logger.error(f"点击失败: {e}")
+            self._set_last_action_debug(
+                action="click_by_text",
+                success=False,
+                text=text,
+                error=str(e),
+            )
             return False
 
     def click_by_selector(self, selector: str, wait: int = 2, timeout_ms: int = 3000) -> bool:
@@ -245,11 +294,22 @@ class BrowserController:
 
         try:
             self._page.locator(selector).first.click(timeout=timeout_ms)
+            self._set_last_action_debug(
+                action="click_by_selector",
+                success=True,
+                selector=selector,
+            )
             time.sleep(wait)
             return True
 
         except Exception as e:
             logger.error(f"点击选择器失败: {e}")
+            self._set_last_action_debug(
+                action="click_by_selector",
+                success=False,
+                selector=selector,
+                error=str(e),
+            )
             return False
 
     def click_selector_by_text(self, selector: str, text: str, wait: int = 2, timeout_ms: int = 3000) -> bool:
@@ -262,11 +322,26 @@ class BrowserController:
         try:
             locator = self._page.locator(selector).filter(has_text=text).first
             locator.click(timeout=timeout_ms)
+            self._set_last_action_debug(
+                action="click_selector_by_text",
+                success=True,
+                selector=selector,
+                text=text,
+                candidates=self.find_text_candidates(text, selector=selector, limit=8),
+            )
             time.sleep(wait)
             return True
 
         except Exception as e:
             logger.error(f"按选择器文本点击失败: {e}")
+            self._set_last_action_debug(
+                action="click_selector_by_text",
+                success=False,
+                selector=selector,
+                text=text,
+                error=str(e),
+                candidates=self.find_text_candidates(text, selector=selector, limit=8),
+            )
             return False
 
     def click_visible_text_via_js(
@@ -359,11 +434,40 @@ class BrowserController:
                 {"needle": text, "leftPanelOnly": left_panel_only},
             )
             if clicked:
+                self._set_last_action_debug(
+                    action="click_visible_text_via_js",
+                    success=True,
+                    text=text,
+                    left_panel_only=left_panel_only,
+                    candidates=self.find_text_candidates(
+                        text,
+                        limit=8,
+                        left_panel_only=left_panel_only,
+                    ),
+                )
                 time.sleep(wait)
                 return True
+            self._set_last_action_debug(
+                action="click_visible_text_via_js",
+                success=False,
+                text=text,
+                left_panel_only=left_panel_only,
+                candidates=self.find_text_candidates(
+                    text,
+                    limit=8,
+                    left_panel_only=left_panel_only,
+                ),
+            )
             return False
         except Exception as e:
             logger.error(f"JS 文本点击失败: {e}")
+            self._set_last_action_debug(
+                action="click_visible_text_via_js",
+                success=False,
+                text=text,
+                left_panel_only=left_panel_only,
+                error=str(e),
+            )
             return False
     
     def type_text(self, text: str, wait: int = 1) -> bool:
@@ -375,11 +479,22 @@ class BrowserController:
         
         try:
             self._page.keyboard.type(text)
+            self._set_last_action_debug(
+                action="type_text",
+                success=True,
+                text_preview=text[:80],
+            )
             time.sleep(wait)
             return True
             
         except Exception as e:
             logger.error(f"输入失败: {e}")
+            self._set_last_action_debug(
+                action="type_text",
+                success=False,
+                text_preview=text[:80],
+                error=str(e),
+            )
             return False
     
     def input_to_element(self, index: int, text: str, wait: int = 1) -> bool:
@@ -396,12 +511,32 @@ class BrowserController:
                 self._page.keyboard.press("Control+a")
                 self._page.keyboard.press("Delete")
                 self._page.keyboard.type(text)
+                self._set_last_action_debug(
+                    action="input_to_element",
+                    success=True,
+                    index=index,
+                    text_preview=text[:80],
+                )
                 time.sleep(wait)
                 return True
+            self._set_last_action_debug(
+                action="input_to_element",
+                success=False,
+                index=index,
+                text_preview=text[:80],
+                error="click failed before input",
+            )
             return False
             
         except Exception as e:
             logger.error(f"输入失败: {e}")
+            self._set_last_action_debug(
+                action="input_to_element",
+                success=False,
+                index=index,
+                text_preview=text[:80],
+                error=str(e),
+            )
             return False
     
     def input_by_selector(self, selector: str, text: str, wait: int = 1, timeout_ms: int = 3000) -> bool:
@@ -420,11 +555,24 @@ class BrowserController:
                 self._page.keyboard.press("Control+a")
                 self._page.keyboard.press("Delete")
                 self._page.keyboard.type(text)
+            self._set_last_action_debug(
+                action="input_by_selector",
+                success=True,
+                selector=selector,
+                text_preview=text[:80],
+            )
             time.sleep(wait)
             return True
             
         except Exception as e:
             logger.error(f"输入失败: {e}")
+            self._set_last_action_debug(
+                action="input_by_selector",
+                success=False,
+                selector=selector,
+                text_preview=text[:80],
+                error=str(e),
+            )
             return False
     
     def press_key(self, key: str, wait: int = 1) -> bool:
@@ -436,11 +584,22 @@ class BrowserController:
         
         try:
             self._page.keyboard.press(key)
+            self._set_last_action_debug(
+                action="press_key",
+                success=True,
+                key=key,
+            )
             time.sleep(wait)
             return True
             
         except Exception as e:
             logger.error(f"按键失败: {e}")
+            self._set_last_action_debug(
+                action="press_key",
+                success=False,
+                key=key,
+                error=str(e),
+            )
             return False
     
     def wait(self, seconds: int) -> None:
@@ -547,3 +706,96 @@ class BrowserController:
             return locator.is_visible(timeout=timeout_ms)
         except Exception:
             return False
+
+    def get_last_action_debug(self) -> Dict[str, Any]:
+        """返回最近一次浏览器动作的调试信息"""
+        return dict(self.last_action_debug)
+
+    def find_text_candidates(
+        self,
+        text: str,
+        selector: str = "",
+        limit: int = 8,
+        left_panel_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """读取页面中匹配文本的可见候选，辅助调试点击失败问题"""
+        if not self._page:
+            return []
+
+        query_selector = selector or "div, span, a, button, li"
+        try:
+            payload = self._page.evaluate(
+                """
+                ({ selector, needle, limit, leftPanelOnly }) => {
+                  const normalizedNeedle = (needle || "").trim().toLowerCase();
+                  if (!normalizedNeedle) return [];
+
+                  const isVisible = (el) => {
+                    if (!el || !(el instanceof Element)) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.visibility === "hidden" || style.display === "none") return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                  };
+
+                  const inLeftPanel = (rect) => rect.left >= 0 && rect.left < window.innerWidth * 0.42;
+
+                  return Array.from(document.querySelectorAll(selector))
+                    .map((el, index) => {
+                      const textValue = (el.innerText || el.textContent || "").trim();
+                      if (!textValue || !isVisible(el)) return null;
+                      const normalizedText = textValue.toLowerCase();
+                      if (!normalizedText.includes(normalizedNeedle)) return null;
+                      const rect = el.getBoundingClientRect();
+                      if (leftPanelOnly && !inLeftPanel(rect)) return null;
+                      return {
+                        index,
+                        tag: (el.tagName || "").toLowerCase(),
+                        text: textValue.slice(0, 120),
+                        exact: normalizedText === normalizedNeedle,
+                        class_name: typeof el.className === "string" ? el.className.slice(0, 120) : "",
+                        data_testid: el.getAttribute("data-testid") || "",
+                        aria_label: el.getAttribute("aria-label") || "",
+                        left: Math.round(rect.left),
+                        top: Math.round(rect.top),
+                        width: Math.round(rect.width),
+                        height: Math.round(rect.height),
+                      };
+                    })
+                    .filter(Boolean)
+                    .slice(0, Math.max(limit, 1));
+                }
+                """,
+                {
+                    "selector": query_selector,
+                    "needle": text,
+                    "limit": max(limit, 1),
+                    "leftPanelOnly": left_panel_only,
+                },
+            )
+            if isinstance(payload, list):
+                return [item for item in payload if isinstance(item, dict)]
+        except Exception as e:
+            logger.error(f"读取文本候选失败: {e}")
+
+        return []
+
+    def _serialize_element(self, element: Element) -> Dict[str, Any]:
+        """序列化元素，供日志与调试使用"""
+        return {
+            "index": element.index,
+            "tag": element.tag,
+            "text": element.text,
+            "clickable": element.clickable,
+            "input_field": element.input_field,
+            "selector": element.selector,
+            "selector_index": element.selector_index,
+        }
+
+    def _set_last_action_debug(self, action: str, success: bool, **payload: Any) -> None:
+        """记录最近一次浏览器动作的调试信息"""
+        self.last_action_debug = {
+            "action": action,
+            "success": success,
+            **payload,
+        }

@@ -679,6 +679,8 @@ HTML_PAGE = """<!doctype html>
         <div><strong>人工审核:</strong> ${runtime.manual_review_enabled ? "开启" : "关闭"}</div>
         <div><strong>最后决策:</strong> ${runtime.last_decision || "-"}</div>
         <div><strong>最后错误:</strong> ${runtime.last_error || "-"}</div>
+        <div><strong>调试轨迹文件:</strong> ${runtime.debug_trace_file || "-"}</div>
+        <div><strong>最近节点轨迹:</strong> ${runtime.last_step_trace || "-"}</div>
       `;
 
       const summaryActions = document.createElement("div");

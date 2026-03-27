@@ -55,6 +55,21 @@ class FakeBrowser:
     def is_page_alive(self):
         return True
 
+    def find_text_candidates(self, text, selector="", limit=8, left_panel_only=False):
+        return [
+            {
+                "text": text,
+                "selector": selector or "div",
+                "left_panel_only": left_panel_only,
+            }
+        ]
+
+    def get_last_action_debug(self):
+        return {
+            "action": "fake",
+            "success": True,
+        }
+
 
 class FakeMemoryStore:
 
@@ -148,6 +163,7 @@ def make_bot(browser=None):
             }
         )
     )
+    bot.debug_trace_path = None
     return bot
 
 
@@ -162,6 +178,7 @@ class TestIMBotTargetChatFlow(unittest.TestCase):
         self.assertTrue(bot.browser.js_click_attempted)
         self.assertTrue(bot.browser.arrow_down_pressed)
         self.assertTrue(bot.browser.enter_pressed)
+        self.assertIn("打开聊天", bot.runtime.last_decision)
 
     def test_wait_for_manual_target_chat_selection_locks_current_chat(self):
         bot = make_bot()
