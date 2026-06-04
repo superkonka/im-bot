@@ -20,12 +20,12 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 # 兼容独立运行
 try:
-    from ...config import DATA_DIR
+    from core.config import DATA_DIR
 except ImportError:
     import sys
     _project_root = Path(__file__).parent.parent.parent.parent
     sys.path.insert(0, str(_project_root / "src"))
-    from config import DATA_DIR
+    from core.config import DATA_DIR
 
 # 状态保存目录
 STATE_DIR = DATA_DIR / "telegram_web_state"

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
-from .config import (
+from core.config import (
     DATA_DIR,
     get_app_config,
     get_config_center_url,
@@ -25,7 +25,7 @@ from .config import (
     resolve_telegram_api_id,
     save_app_config,
 )
-from .runtime_control import (
+from agent.runtime_control import (
     OperatorControlStore,
     PendingDraft,
     RuntimeDashboard,
@@ -33,7 +33,7 @@ from .runtime_control import (
     get_runtime_store_paths,
 )
 from .utils.helpers import extract_json_from_text, truncate_string
-from .utils.logger import logger
+from core.logger import logger
 
 try:
     from zoneinfo import ZoneInfo

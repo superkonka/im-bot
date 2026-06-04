@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
 """
-Kimi 视觉驱动 IM 机器人
+IM Bot - Telegram 自动化工具集
 
-支持 WhatsApp Web 和 Telegram Web 的自动化消息监控与回复
+分层架构：
+  skills/    → 底层工具（Web DOM / MTProto）
+  agent/     → 上层应用（对话引擎）
+  core/      → 基础设施（配置、日志）
 """
 
-__version__ = "1.1.0"
-__author__ = "Kimi Code CLI"
-
-from .im_bot import IMBot
-from .browser_controller import BrowserController
-from .vision_agent import KimiVisionAgent
-from .use_cases import UseCaseDefinition, UseCaseValidationResult
-from .platforms import get_platform
-
-__all__ = [
-    'IMBot',
-    'BrowserController',
-    'KimiVisionAgent',
-    'UseCaseDefinition',
-    'UseCaseValidationResult',
-    'get_platform'
-]
+__version__ = "2.0.0"
+__author__ = "superkonka"

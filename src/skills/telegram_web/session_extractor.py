@@ -24,7 +24,7 @@ _project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(_project_root / "src"))
 
 try:
-    from config import DATA_DIR
+    from core.config import DATA_DIR
 except ImportError:
     DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 

@@ -14,7 +14,8 @@ from typing import Any, Dict, Optional
 
 
 # 基础路径
-BASE_DIR = Path(__file__).parent.parent
+# config.py 现在在 src/core/ 下，需要上溯三层到项目根目录
+BASE_DIR = Path(__file__).parent.parent.parent
 SCREENSHOT_DIR = BASE_DIR / "screenshots"
 LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data"
