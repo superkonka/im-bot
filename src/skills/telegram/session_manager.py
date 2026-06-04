@@ -16,14 +16,14 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 try:
-    from core.config import DATA_DIR
+    from config import DATA_DIR
 except ImportError:
     import sys
     from pathlib import Path
     # 独立运行时回退到项目根目录
     _project_root = Path(__file__).parent.parent.parent.parent
     sys.path.insert(0, str(_project_root / "src"))
-    from core.config import DATA_DIR
+    from config import DATA_DIR
 
 # Session 文件存放目录
 SESSION_DIR = DATA_DIR / "telegram_sessions"

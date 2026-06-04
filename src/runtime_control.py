@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.config import DATA_DIR
+from config import DATA_DIR
 
 
 @dataclass

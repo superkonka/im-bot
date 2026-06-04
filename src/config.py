@@ -14,8 +14,8 @@ from typing import Any, Dict, Optional
 
 
 # 基础路径
-# config.py 现在在 src/core/ 下，需要上溯三层到项目根目录
-BASE_DIR = Path(__file__).parent.parent.parent
+# config.py 现在在 src/ 下，需要上溯两层到项目根目录
+BASE_DIR = Path(__file__).parent.parent
 LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data"
 CONFIG_FILE = DATA_DIR / "app_config.json"

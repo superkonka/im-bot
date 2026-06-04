@@ -100,29 +100,24 @@ im-bot/
 ├── requirements.txt
 ├── README.md                  # 本文档
 │
-├── src/
-│   ├── core/                  # 基础设施
-│   │   ├── config.py
-│   │   └── logger.py
+├── src/                       # 源码
+│   ├── config.py              # 配置管理
+│   ├── logger.py              # 日志
+│   ├── helpers.py             # 通用工具
+│   ├── chatbot.py             # 对话引擎
+│   ├── runtime_control.py     # 运行时控制
 │   │
-│   ├── skills/                # 技能层（工具）
-│   │   ├── telegram/          # MTProto 方案
-│   │   │   ├── skill.py
-│   │   │   ├── session_manager.py
-│   │   │   └── types.py
-│   │   └── telegram_web/      # Web DOM 方案
-│   │       ├── skill.py
-│   │       ├── telegram_mcp_server.py
-│   │       ├── session_extractor.py
-│   │       ├── crawler_loop.py
-│   │       └── demo.py
-│   │
-│   ├── agent/                 # 应用层（对话引擎）
-│   │   ├── chatbot.py
-│   │   └── runtime_control.py
-│   │
-│   └── utils/                 # 通用工具
-│       └── helpers.py
+│   └── skills/                # 技能层
+│       ├── telegram/          # MTProto 方案
+│       │   ├── skill.py
+│       │   ├── session_manager.py
+│       │   └── types.py
+│       └── telegram_web/      # Web DOM 方案
+│           ├── skill.py
+│           ├── telegram_mcp_server.py
+│           ├── session_extractor.py
+│           ├── crawler_loop.py
+│           └── demo.py
 │
 └── data/                      # 运行时数据（gitignored）
     ├── telegram_web_state/    # 浏览器登录状态
