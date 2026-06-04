@@ -771,6 +771,589 @@ class TelegramWebSkill:
         await self._page.screenshot(path=path)
         return path
 
+    # ────────────────────────────── 扩展操作 ──────────────────────────────
+
+    async def search_chat(self, query: str) -> List[ChatItem]:
+        """
+        在 Telegram Web 中搜索聊天或联系人。
+
+        流程:
+            1. 点击搜索框
+            2. 输入查询关键词
+            3. 等待搜索结果
+            4. 提取结果列表
+
+        参数:
+            query: 搜索关键词（聊天标题、用户名、手机号等）
+
+        返回:
+            匹配的聊天列表（最多 10 个）
+        """
+        if not self._page:
+            return []
+
+        # 步骤 1: 点击搜索框
+        search_selectors = [
+            '#search-input',
+            '.input-search-input',
+            '[placeholder*="Search"]',
+            '[placeholder*="搜索"]',
+            'input[type="text"]',
+        ]
+        search_input = await self._find_first_visible(search_selectors)
+        if not search_input:
+            print("[search_chat] 未找到搜索框")
+            return []
+
+        await search_input.click()
+        await asyncio.sleep(0.5)
+
+        # 步骤 2: 输入关键词
+        await search_input.fill(query)
+        await asyncio.sleep(1.5)  # 等待搜索完成
+
+        # 步骤 3: 提取搜索结果
+        results: List[ChatItem] = []
+        result_selectors = [
+            '.search-group .chatlist-chat',
+            '.search-group .row-clickable',
+            '[class*="search"] .chatlist-chat',
+            '.sidebar-content .chatlist-chat',
+        ]
+
+        for selector in result_selectors:
+            elements = await self._page.query_selector_all(selector)
+            if elements:
+                for idx, elem in enumerate(elements[:10]):
+                    try:
+                        title = ""
+                        for title_sel in ['.chat-title', '.title', '.row-title', '[class*="title"]']:
+                            title_el = await elem.query_selector(title_sel)
+                            if title_el:
+                                title = (await title_el.inner_text() or "").strip()
+                                if title:
+                                    break
+
+                        subtitle = ""
+                        for sub_sel in ['.chat-subtitle', '.subtitle', '.row-subtitle', '[class*="subtitle"]']:
+                            sub_el = await elem.query_selector(sub_sel)
+                            if sub_el:
+                                subtitle = (await sub_el.inner_text() or "").strip()
+                                if subtitle:
+                                    break
+
+                        chat_id = await elem.get_attribute("data-peer-id") or f"search_{idx}"
+
+                        results.append(ChatItem(
+                            chat_id=chat_id,
+                            title=title or f"Result {idx}",
+                            last_message=subtitle,
+                        ))
+                    except Exception:
+                        continue
+                break
+
+        # 清除搜索框（按 Escape）
+        await self._page.keyboard.press("Escape")
+        await asyncio.sleep(0.5)
+
+        return results
+
+    async def mark_as_read(self, chat_id: str) -> bool:
+        """
+        将指定聊天标记为已读。
+
+        参数:
+            chat_id: 聊天 ID
+
+        返回:
+            是否成功
+        """
+        if not self._page:
+            return False
+
+        # 找到聊天元素
+        chat_elem = await self._page.query_selector(f'[data-peer-id="{chat_id}"]')
+        if not chat_elem:
+            return False
+
+        try:
+            # 右键打开上下文菜单
+            await chat_elem.click(button="right")
+            await asyncio.sleep(0.5)
+
+            # 查找 "Mark as read" 选项（支持多语言）
+            read_options = [
+                'text-is("Mark as read")',
+                'text-is("标记为已读")',
+                'text-is("Read")',
+                'text-is("已读")',
+            ]
+            for option in read_options:
+                try:
+                    btn = await self._page.wait_for_selector(option, timeout=1000)
+                    if btn:
+                        await btn.click()
+                        await asyncio.sleep(0.3)
+                        return True
+                except Exception:
+                    continue
+
+            # 如果没找到，按 Escape 关闭菜单
+            await self._page.keyboard.press("Escape")
+            return False
+        except Exception as exc:
+            print(f"[mark_as_read] 失败: {exc}")
+            return False
+
+    async def archive_chat(self, chat_id: str) -> bool:
+        """
+        归档指定聊天。
+
+        参数:
+            chat_id: 聊天 ID
+
+        返回:
+            是否成功
+        """
+        if not self._page:
+            return False
+
+        chat_elem = await self._page.query_selector(f'[data-peer-id="{chat_id}"]')
+        if not chat_elem:
+            return False
+
+        try:
+            await chat_elem.click(button="right")
+            await asyncio.sleep(0.5)
+
+            archive_options = [
+                'text-is("Archive")',
+                'text-is("归档")',
+            ]
+            for option in archive_options:
+                try:
+                    btn = await self._page.wait_for_selector(option, timeout=1000)
+                    if btn:
+                        await btn.click()
+                        await asyncio.sleep(0.3)
+                        return True
+                except Exception:
+                    continue
+
+            await self._page.keyboard.press("Escape")
+            return False
+        except Exception as exc:
+            print(f"[archive_chat] 失败: {exc}")
+            return False
+
+    async def pin_chat(self, chat_id: str, pin: bool = True) -> bool:
+        """
+        置顶或取消置顶聊天。
+
+        参数:
+            chat_id: 聊天 ID
+            pin: True 表示置顶，False 表示取消置顶
+
+        返回:
+            是否成功
+        """
+        if not self._page:
+            return False
+
+        chat_elem = await self._page.query_selector(f'[data-peer-id="{chat_id}"]')
+        if not chat_elem:
+            return False
+
+        try:
+            await chat_elem.click(button="right")
+            await asyncio.sleep(0.5)
+
+            if pin:
+                pin_options = [
+                    'text-is("Pin")',
+                    'text-is("置顶")',
+                    'text-is("Pin to top")',
+                ]
+            else:
+                pin_options = [
+                    'text-is("Unpin")',
+                    'text-is("取消置顶")',
+                    'text-is("Unpin from top")',
+                ]
+
+            for option in pin_options:
+                try:
+                    btn = await self._page.wait_for_selector(option, timeout=1000)
+                    if btn:
+                        await btn.click()
+                        await asyncio.sleep(0.3)
+                        return True
+                except Exception:
+                    continue
+
+            await self._page.keyboard.press("Escape")
+            return False
+        except Exception as exc:
+            print(f"[pin_chat] 失败: {exc}")
+            return False
+
+    async def delete_message(self, message_text: str) -> bool:
+        """
+        在当前聊天中删除包含指定文本的消息。
+
+        注意: 只能删除自己发送的消息（outgoing）。
+
+        参数:
+            message_text: 要删除的消息文本（模糊匹配）
+
+        返回:
+            是否成功删除至少一条
+        """
+        if not self._page or not self._current_chat_id:
+            return False
+
+        deleted = False
+
+        for selector in self.SELECTORS["message_bubble"]:
+            elements = await self._page.query_selector_all(selector)
+            if not elements:
+                continue
+
+            for elem in elements:
+                try:
+                    # 检查是否是自己发送的消息
+                    is_outgoing = False
+                    outgoing_sel = await elem.query_selector('[class*="outgoing"], [class*="is-out"], .out')
+                    if outgoing_sel:
+                        is_outgoing = True
+
+                    if not is_outgoing:
+                        continue
+
+                    # 获取消息文本
+                    text = ""
+                    for text_sel in ['.message-text', '.text', '[class*="text"]']:
+                        text_el = await elem.query_selector(text_sel)
+                        if text_el:
+                            text = (await text_el.inner_text() or "").strip()
+                            if text:
+                                break
+
+                    # 模糊匹配
+                    if message_text in text or text in message_text:
+                        # 右键打开菜单
+                        await elem.click(button="right")
+                        await asyncio.sleep(0.5)
+
+                        delete_options = [
+                            'text-is("Delete")',
+                            'text-is("删除")',
+                        ]
+                        for option in delete_options:
+                            try:
+                                btn = await self._page.wait_for_selector(option, timeout=1000)
+                                if btn:
+                                    await btn.click()
+                                    await asyncio.sleep(0.3)
+
+                                    # 可能需要确认删除
+                                    confirm_options = [
+                                        'text-is("Delete for me and")',
+                                        'text-is("Delete for everyone")',
+                                        'text-is("Also delete")',
+                                    ]
+                                    for confirm_opt in confirm_options:
+                                        try:
+                                            confirm_btn = await self._page.wait_for_selector(
+                                                confirm_opt, timeout=500
+                                            )
+                                            if confirm_btn:
+                                                # 点击确认对话框中的 Delete
+                                                final_delete = await self._page.wait_for_selector(
+                                                    'button:has-text("Delete")',
+                                                    timeout=500,
+                                                )
+                                                if final_delete:
+                                                    await final_delete.click()
+                                                    await asyncio.sleep(0.3)
+                                        except Exception:
+                                            pass
+
+                                    deleted = True
+                                    break
+                            except Exception:
+                                continue
+
+                        # 关闭菜单（如果还在）
+                        await self._page.keyboard.press("Escape")
+
+                except Exception:
+                    continue
+
+            break  # 只处理第一个匹配的选择器
+
+        return deleted
+
+    async def reply_to_message(self, message_text: str, reply_text: str) -> SendResult:
+        """
+        在当前聊天中回复包含指定文本的消息。
+
+        参数:
+            message_text: 要回复的目标消息文本（模糊匹配）
+            reply_text: 回复内容
+
+        返回:
+            发送结果
+        """
+        if not self._page or not self._current_chat_id:
+            return SendResult(success=False, error="未打开聊天")
+
+        for selector in self.SELECTORS["message_bubble"]:
+            elements = await self._page.query_selector_all(selector)
+            if not elements:
+                continue
+
+            # 从后往前找，优先匹配最近的消息
+            for elem in reversed(elements):
+                try:
+                    text = ""
+                    for text_sel in ['.message-text', '.text', '[class*="text"]']:
+                        text_el = await elem.query_selector(text_sel)
+                        if text_el:
+                            text = (await text_el.inner_text() or "").strip()
+                            if text:
+                                break
+
+                    if message_text in text or text in message_text:
+                        # 右键打开菜单
+                        await elem.click(button="right")
+                        await asyncio.sleep(0.5)
+
+                        reply_options = [
+                            'text-is("Reply")',
+                            'text-is("回复")',
+                        ]
+                        for option in reply_options:
+                            try:
+                                btn = await self._page.wait_for_selector(option, timeout=1000)
+                                if btn:
+                                    await btn.click()
+                                    await asyncio.sleep(0.5)
+
+                                    # 现在应该进入了回复模式，找到输入框发送
+                                    return await self.send_message(reply_text)
+                            except Exception:
+                                continue
+
+                        # 如果没找到回复按钮，尝试悬停找回复图标
+                        await self._page.keyboard.press("Escape")
+                        await elem.hover()
+                        await asyncio.sleep(0.3)
+
+                        # 查找回复按钮（通常在消息操作栏中）
+                        reply_btn_selectors = [
+                            'button[title="Reply"]',
+                            '[aria-label="Reply"]',
+                            '.reply-button',
+                        ]
+                        for rbs in reply_btn_selectors:
+                            try:
+                                reply_btn = await self._page.query_selector(rbs)
+                                if reply_btn and await reply_btn.is_visible():
+                                    await reply_btn.click()
+                                    await asyncio.sleep(0.5)
+                                    return await self.send_message(reply_text)
+                            except Exception:
+                                continue
+
+                        return SendResult(success=False, error="未找到回复按钮")
+
+                except Exception:
+                    continue
+
+            break
+
+        return SendResult(success=False, error=f"未找到包含 '{message_text}' 的消息")
+
+    async def forward_message(self, message_text: str, target_chat_id: str) -> SendResult:
+        """
+        在当前聊天中转发包含指定文本的消息到目标聊天。
+
+        参数:
+            message_text: 要转发的消息文本（模糊匹配）
+            target_chat_id: 目标聊天 ID
+
+        返回:
+            发送结果
+        """
+        if not self._page or not self._current_chat_id:
+            return SendResult(success=False, error="未打开聊天")
+
+        for selector in self.SELECTORS["message_bubble"]:
+            elements = await self._page.query_selector_all(selector)
+            if not elements:
+                continue
+
+            for elem in elements:
+                try:
+                    text = ""
+                    for text_sel in ['.message-text', '.text', '[class*="text"]']:
+                        text_el = await elem.query_selector(text_sel)
+                        if text_el:
+                            text = (await text_el.inner_text() or "").strip()
+                            if text:
+                                break
+
+                    if message_text in text or text in message_text:
+                        # 右键打开菜单
+                        await elem.click(button="right")
+                        await asyncio.sleep(0.5)
+
+                        forward_options = [
+                            'text-is("Forward")',
+                            'text-is("转发")',
+                        ]
+                        for option in forward_options:
+                            try:
+                                btn = await self._page.wait_for_selector(option, timeout=1000)
+                                if btn:
+                                    await btn.click()
+                                    await asyncio.sleep(1)
+
+                                    # 等待转发对话框出现，搜索目标聊天
+                                    search_input = await self._find_first_visible([
+                                        '.selector-search-input',
+                                        'input[placeholder*="Search"]',
+                                        'input[placeholder*="搜索"]',
+                                    ])
+                                    if search_input:
+                                        # 尝试用 chat_id 或标题搜索
+                                        await search_input.fill(target_chat_id)
+                                        await asyncio.sleep(1)
+
+                                    # 点击第一个结果
+                                    result = await self._page.wait_for_selector(
+                                        '.selector-user, .chatlist-chat',
+                                        timeout=3000,
+                                    )
+                                    if result:
+                                        await result.click()
+                                        await asyncio.sleep(0.5)
+
+                                        # 点击发送
+                                        send_btn = await self._find_first_visible([
+                                            'button:has-text("Send")',
+                                            'button:has-text("发送")',
+                                        ])
+                                        if send_btn:
+                                            await send_btn.click()
+                                            await asyncio.sleep(0.5)
+                                            return SendResult(success=True)
+
+                                    return SendResult(success=False, error="转发对话框操作失败")
+                            except Exception:
+                                continue
+
+                        await self._page.keyboard.press("Escape")
+                        return SendResult(success=False, error="未找到转发选项")
+
+                except Exception:
+                    continue
+
+            break
+
+        return SendResult(success=False, error=f"未找到包含 '{message_text}' 的消息")
+
+    async def get_chat_info(self, chat_id: str) -> dict:
+        """
+        获取指定聊天的详细信息。
+
+        流程:
+            1. 打开聊天
+            2. 点击聊天标题栏打开信息面板
+            3. 提取信息（成员数、描述等）
+
+        参数:
+            chat_id: 聊天 ID
+
+        返回:
+            聊天信息字典
+        """
+        if not self._page:
+            return {}
+
+        # 先打开聊天
+        if not await self.open_chat(chat_id):
+            return {}
+
+        await asyncio.sleep(1)
+
+        info = {
+            "chat_id": chat_id,
+            "title": "",
+            "type": "unknown",
+            "member_count": None,
+            "description": "",
+            "username": "",
+            "link": "",
+        }
+
+        try:
+            # 尝试从页面标题获取聊天标题
+            for title_sel in ['.chat-info .chat-title', '.sidebar-header-title', '[class*="chat-title"]']:
+                title_el = await self._page.query_selector(title_sel)
+                if title_el:
+                    info["title"] = (await title_el.inner_text() or "").strip()
+                    if info["title"]:
+                        break
+
+            # 点击标题栏打开信息面板
+            header_selectors = [
+                '.chat-info',
+                '.chat-header',
+                '[class*="chat-info"]',
+                '[class*="chat-header"]',
+            ]
+            header = await self._find_first_visible(header_selectors)
+            if header:
+                await header.click()
+                await asyncio.sleep(1.5)
+
+                # 提取信息面板中的详情
+                info_selectors = {
+                    "member_count": ['.row-medias .row-title', '.members-count', '[class*="member"]'],
+                    "description": ['.row-description', '.bio', '.about', '[class*="description"]'],
+                    "username": ['.row-username .row-title', '.username', '[class*="username"]'],
+                    "link": ['.row-link .row-title', '.link', '[class*="link"]'],
+                }
+
+                for key, sels in info_selectors.items():
+                    for sel in sels:
+                        el = await self._page.query_selector(sel)
+                        if el:
+                            val = (await el.inner_text() or "").strip()
+                            if val:
+                                info[key] = val
+                                break
+
+                # 判断聊天类型
+                if "members" in str(info.get("member_count", "")).lower() or info.get("member_count"):
+                    info["type"] = "group"
+                elif info.get("username"):
+                    info["type"] = "channel"
+                else:
+                    info["type"] = "private"
+
+                # 关闭信息面板（按 Escape 或点击返回）
+                await self._page.keyboard.press("Escape")
+                await asyncio.sleep(0.3)
+
+        except Exception as exc:
+            print(f"[get_chat_info] 获取信息失败: {exc}")
+
+        return info
+
     @property
     def page(self) -> Optional[Page]:
         """暴露原始 Page 对象（高级用法）"""
