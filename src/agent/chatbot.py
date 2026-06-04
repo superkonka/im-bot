@@ -19,7 +19,6 @@ from openai import OpenAI
 from core.config import (
     DATA_DIR,
     get_app_config,
-    get_config_center_url,
     resolve_kimi_api_key,
     resolve_telegram_api_hash,
     resolve_telegram_api_id,
@@ -896,7 +895,6 @@ class TelegramUserBot:
         logger.info(f"主动对话: {self.settings.proactive.enabled}")
         logger.info(f"人工审核: {self.settings.manual_review}")
         logger.info(f"Dry Run: {self.settings.dry_run}")
-        logger.info(f"配置中心 / 运行后台地址: {get_config_center_url()}（需先运行 python config_center.py）")
         self._update_runtime(status="starting")
 
         await self._resolve_target_entity()

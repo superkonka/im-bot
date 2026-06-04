@@ -3,7 +3,6 @@
 from .config import (
     DATA_DIR,
     CONFIG_FILE,
-    SCREENSHOT_DIR,
     LOG_DIR,
     get_app_config,
     save_app_config,
@@ -14,7 +13,6 @@ from .logger import logger
 __all__ = [
     "DATA_DIR",
     "CONFIG_FILE",
-    "SCREENSHOT_DIR",
     "LOG_DIR",
     "get_app_config",
     "save_app_config",

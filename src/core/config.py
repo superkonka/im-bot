@@ -16,15 +16,11 @@ from typing import Any, Dict, Optional
 # 基础路径
 # config.py 现在在 src/core/ 下，需要上溯三层到项目根目录
 BASE_DIR = Path(__file__).parent.parent.parent
-SCREENSHOT_DIR = BASE_DIR / "screenshots"
 LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data"
 CONFIG_FILE = DATA_DIR / "app_config.json"
-CONFIG_CENTER_HOST = "127.0.0.1"
-CONFIG_CENTER_PORT = 8765
 
 # 创建目录
-SCREENSHOT_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -557,11 +553,6 @@ def reset_app_config() -> Dict[str, Any]:
 def get_config_schema() -> Dict[str, Any]:
     """获取配置元数据"""
     return config_manager.get_schema()
-
-
-def get_config_center_url(host: str = CONFIG_CENTER_HOST, port: int = CONFIG_CENTER_PORT) -> str:
-    """获取本地配置中心默认地址"""
-    return f"http://{host}:{port}"
 
 
 def resolve_kimi_api_key(config: Optional[Dict[str, Any]] = None) -> str:
