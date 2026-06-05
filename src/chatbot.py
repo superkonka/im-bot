@@ -31,7 +31,7 @@ from runtime_control import (
     RuntimeDashboardStore,
     get_runtime_store_paths,
 )
-from helpers import extract_json_from_text, truncate_string
+from helpers import extract_json_from_text, normalize_temperature, truncate_string
 from logger import logger
 
 try:
@@ -532,7 +532,7 @@ class TelegramLLMOrchestrator:
                         "content": prompt,
                     },
                 ],
-                temperature=self._normalize_temperature(self.temperature),
+                temperature=normalize_temperature(self.temperature, self.model),
                 max_tokens=900,
             )
             content = response.choices[0].message.content
@@ -646,7 +646,7 @@ class TelegramLLMOrchestrator:
                         "content": prompt,
                     },
                 ],
-                temperature=self._normalize_temperature(0.2),
+                temperature=normalize_temperature(0.2, self.model),
                 max_tokens=700,
             )
             data = extract_json_from_text(response.choices[0].message.content or "")
@@ -683,12 +683,6 @@ class TelegramLLMOrchestrator:
             f"- 交互注记: {'；'.join(memory.interaction_notes[-4:]) if memory.interaction_notes else '暂无'}",
         ]
         return "\n".join(parts)
-
-    def _normalize_temperature(self, temperature: float) -> float:
-        model_name = (self.model or "").lower()
-        if model_name.startswith("kimi-"):
-            return 1
-        return temperature
 
 
 class TelegramSafetyReviewer:
@@ -789,7 +783,7 @@ class TelegramSafetyReviewer:
                         "content": prompt,
                     },
                 ],
-                temperature=self._normalize_temperature(0.2),
+                temperature=normalize_temperature(0.2, self.model),
                 max_tokens=700,
             )
             data = extract_json_from_text(response.choices[0].message.content or "")
@@ -830,12 +824,6 @@ class TelegramSafetyReviewer:
             )
 
         return result
-
-    def _normalize_temperature(self, temperature: float) -> float:
-        model_name = (self.model or "").lower()
-        if model_name.startswith("kimi-"):
-            return 1
-        return temperature
 
 
 class TelegramUserBot:

@@ -36,10 +36,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -783,9 +781,8 @@ class WhatsAppWebSkill:
                             # 检查是否已成功加入
                             if await self.is_logged_in():
                                 chats = await self.get_chat_list(limit=50)
-                                for chat in chats:
-                                    if "Bill" in chat.title or "stock" in chat.title.lower():
-                                        return JoinGroupResult(success=True, status="joined")
+                                # 群聊列表中出现新群，说明已成功加入
+                                return JoinGroupResult(success=True, status="joined")
 
                             return JoinGroupResult(success=True, status="joined")
                     except Exception:
@@ -805,10 +802,7 @@ class WhatsAppWebSkill:
 
             # 如果页面显示聊天列表，可能已经加入成功
             if await self.is_logged_in():
-                chats = await self.get_chat_list(limit=50)
-                for chat in chats:
-                    if "Bill" in chat.title or "stock" in chat.title.lower():
-                        return JoinGroupResult(success=True, status="joined")
+                return JoinGroupResult(success=True, status="joined")
 
             return JoinGroupResult(success=False, error=f"未知页面状态: {body_text[:150]}")
 

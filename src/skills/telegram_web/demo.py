@@ -20,7 +20,7 @@ sys.path.insert(0, str(_project_root / "src"))
 
 from skills.telegram_web.skill import TelegramWebSkill
 
-PHONE = "+8613580541293"
+PHONE = os.environ.get("TELEGRAM_PHONE", "")
 
 
 async def choose_login_method(skill: TelegramWebSkill, use_qr: bool = True) -> bool:

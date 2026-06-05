@@ -22,10 +22,9 @@ Telegram Web MCP Server
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -72,12 +71,12 @@ async def get_chat_list(limit: int = 20) -> str:
     # 等待页面加载
     await asyncio.sleep(3)
 
-    chats = await skill.page.evaluate(f"""
-        () => {{
+    chats = await skill.page.evaluate("""
+        (limit) => {
             const results = [];
             const items = document.querySelectorAll('.chatlist-chat, .row-clickable');
-            items.forEach((el, idx) => {{
-                if (idx >= {limit}) return;
+            items.forEach((el, idx) => {
+                if (idx >= limit) return;
                 const titleEl = el.querySelector('.dialog-title, .row-title');
                 const subtitleEl = el.querySelector('.dialog-subtitle, .row-subtitle');
                 const badgeEl = el.querySelector('.badge:not(.is-badge-empty)');
@@ -88,13 +87,13 @@ async def get_chat_list(limit: int = 20) -> str:
                 let unread = badgeEl ? (parseInt(badgeEl.innerText.trim()) || 0) : 0;
                 let isPinned = !!pinnedEl;
 
-                if (title && !title.includes('Never miss') && !title.includes('Enable notifications')) {{
-                    results.push({{idx, title, subtitle: subtitle.slice(0, 60), unread, isPinned}});
-                }}
-            }});
+                if (title && !title.includes('Never miss') && !title.includes('Enable notifications')) {
+                    results.push({idx: idx, title: title, subtitle: subtitle.slice(0, 60), unread: unread, isPinned: isPinned});
+                }
+            });
             return results;
-        }}
-    """)
+        }
+    """, limit)
 
     if not chats:
         return "暂无聊天数据，页面可能还在加载中。"
@@ -138,16 +137,16 @@ async def get_messages(chat_title: str, limit: int = 20) -> str:
     await asyncio.sleep(2)
 
     # 提取消息
-    messages = await skill.page.evaluate(f"""
-        () => {{
+    messages = await skill.page.evaluate("""
+        (limit) => {
             const results = [];
             const bubbles = document.querySelectorAll('.bubble');
-            const msgs = Array.from(bubbles).slice(-{limit});
-            msgs.forEach((el, idx) => {{
-                if (el.classList.contains('is-date')) {{
-                    results.push({{sender: 'System', text: '[日期: ' + el.innerText.trim() + ']', time: ''}});
+            const msgs = Array.from(bubbles).slice(-limit);
+            msgs.forEach((el, idx) => {
+                if (el.classList.contains('is-date')) {
+                    results.push({sender: 'System', text: '[日期: ' + el.innerText.trim() + ']', time: ''});
                     return;
-                }}
+                }
 
                 let sender = '';
                 const nameEl = el.querySelector('.name, .peer-title, .post-author');
@@ -155,29 +154,29 @@ async def get_messages(chat_title: str, limit: int = 20) -> str:
 
                 let text = '';
                 const textEl = el.querySelector('.bubble-content, .service-msg');
-                if (textEl) {{
+                if (textEl) {
                     text = textEl.innerText.trim();
-                }} else {{
+                } else {
                     const clone = el.cloneNode(true);
                     clone.querySelectorAll('.message-time, .time, .message-status').forEach(e => e.remove());
                     text = clone.innerText.trim();
-                }}
+                }
 
                 const isOutgoing = el.classList.contains('is-out') || el.classList.contains('own');
                 let time = '';
                 const timeEl = el.querySelector('.message-time, .time');
                 if (timeEl) time = timeEl.innerText.trim();
 
-                results.push({{
+                results.push({
                     sender: sender || (isOutgoing ? 'Me' : 'Unknown'),
                     text: text.slice(0, 200),
                     time: time,
                     is_me: isOutgoing,
-                }});
-            }});
+                });
+            });
             return results;
-        }}
-    """)
+        }
+    """, limit)
 
     if not messages:
         return "该聊天暂无消息。"
@@ -658,21 +657,21 @@ async def get_contacts(limit: int = 50) -> str:
                     continue
 
         # 提取联系人列表
-        contacts = await skill.page.evaluate(f"""
-            () => {{
+        contacts = await skill.page.evaluate("""
+            (limit) => {
                 const results = [];
-                document.querySelectorAll('.chatlist-chat, .row-clickable').forEach(el => {{
+                document.querySelectorAll('.chatlist-chat, .row-clickable').forEach(el => {
                     const titleEl = el.querySelector('.chat-title, .title, .row-title');
                     const statusEl = el.querySelector('.chat-subtitle, .status, .row-subtitle');
                     let title = titleEl ? titleEl.innerText.trim() : '';
                     let status = statusEl ? statusEl.innerText.trim() : '';
-                    if (title) {{
-                        results.push({{title, status}});
-                    }}
-                }});
-                return results.slice(0, {limit});
-            }}
-        """)
+                    if (title) {
+                        results.push({title: title, status: status});
+                    }
+                });
+                return results.slice(0, limit);
+            }
+        """, limit)
 
         if not contacts:
             # 返回聊天列表页
@@ -727,23 +726,24 @@ async def get_message_by_keyword(chat_title: str, keyword: str, limit: int = 20)
     await asyncio.sleep(2)
 
     # 提取所有消息并筛选
-    messages = await skill.page.evaluate(f"""
-        () => {{
+    keyword_lower = keyword.lower()
+    messages = await skill.page.evaluate("""
+        (args) => {
             const results = [];
             const bubbles = document.querySelectorAll('.bubble');
-            const msgs = Array.from(bubbles).slice(-{limit});
-            msgs.forEach((el) => {{
+            const msgs = Array.from(bubbles).slice(-args.limit);
+            msgs.forEach((el) => {
                 let text = '';
                 const textEl = el.querySelector('.message-text, .text');
-                if (textEl) {{
+                if (textEl) {
                     text = textEl.innerText.trim();
-                }} else {{
+                } else {
                     const clone = el.cloneNode(true);
                     clone.querySelectorAll('.message-time, .time, .message-status').forEach(e => e.remove());
                     text = clone.innerText.trim();
-                }}
+                }
 
-                if (text.toLowerCase().includes('{keyword.lower()}')) {{
+                if (text.toLowerCase().includes(args.keyword)) {
                     let sender = '';
                     const nameEl = el.querySelector('.name, .peer-title');
                     if (nameEl) sender = nameEl.innerText.trim();
@@ -752,17 +752,17 @@ async def get_message_by_keyword(chat_title: str, keyword: str, limit: int = 20)
                     const timeEl = el.querySelector('.message-time, .time');
                     if (timeEl) time = timeEl.innerText.trim();
 
-                    results.push({{
+                    results.push({
                         sender: sender || (isOutgoing ? 'Me' : 'Unknown'),
                         text: text.slice(0, 200),
                         time: time,
                         is_me: isOutgoing,
-                    }});
-                }}
-            }});
+                    });
+                }
+            });
             return results;
-        }}
-    """)
+        }
+    """, {"limit": limit, "keyword": keyword_lower})
 
     if not messages:
         return f"📂 聊天: {chat_title}\n在最近 {limit} 条消息中未找到包含 '{keyword}' 的消息。"

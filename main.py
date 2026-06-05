@@ -48,6 +48,10 @@ def main():
   extract  - 从浏览器提取 Session 并转换为 Telethon 格式
 
 推荐入口:
+  .venv/bin/python mcp_server.py telegram   # Telegram MCP Server
+  .venv/bin/python mcp_server.py whatsapp   # WhatsApp MCP Server
+
+推荐入口:
   .venv/bin/python mcp_server.py   # MCP Server（AI 客户端调用）
         """
     )

@@ -205,7 +205,7 @@ vim ~/.config/claude/claude_desktop_config.json
 
 ```
 ✅ telegram — connected
-   Tools: 13 available
+   Tools: 15 available
 ✅ whatsapp — connected
    Tools: 7 available
 ```

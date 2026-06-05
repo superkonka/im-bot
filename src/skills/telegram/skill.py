@@ -308,12 +308,11 @@ class TelegramSkill:
                 is_mention = True
 
             # 判断是否是首次联系（通过历史消息数推断）
-            is_first = False
+            is_first = True
             try:
-                async for _ in self._client.iter_messages(chat.chat_id, limit=2, from_user=sender_id):
-                    pass
-                else:
-                    is_first = True
+                async for _ in self._client.iter_messages(chat.chat_id, limit=1, from_user=sender_id):
+                    is_first = False
+                    break
             except Exception:
                 pass
 

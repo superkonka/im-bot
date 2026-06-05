@@ -100,7 +100,7 @@ python mcp_server.py whatsapp   # 启动 WhatsApp MCP Server
 
 ### 3.2 MCP Server 层
 
-#### `telegram_mcp_server.py` — 13 个工具
+#### `telegram_mcp_server.py` — 15 个工具
 
 ```
 读取类（安全）

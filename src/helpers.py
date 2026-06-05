@@ -38,3 +38,16 @@ def truncate_string(text: str, max_length: int = 100) -> str:
     if len(text) <= max_length:
         return text
     return text[:max_length] + "..."
+
+
+def normalize_temperature(temperature: float, model: str = "") -> float:
+    """
+    根据模型名称规范化 temperature 参数。
+
+    某些模型（如 Kimi）对 temperature 的处理与其他模型不同，
+    需要特殊处理。
+    """
+    model_name = model.lower()
+    if model_name.startswith("kimi-"):
+        return 1
+    return temperature

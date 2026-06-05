@@ -6,16 +6,28 @@
 
 ## 🔴 P0 — 阻塞上线
 
+- [x] ~~**`page.evaluate` 字符串拼接注入风险**~~ (2025-06-05)
+  - 修复 `telegram_mcp_server.py` 中 4 处 f-string 拼接，改为 Playwright 参数传递
+
+- [x] ~~**`join_group_link` 硬编码测试残留**~~ (2025-06-05)
+  - 删除 `whatsapp_web/skill.py` 中硬编码的 `"Bill"` / `"stock"` 判断
+
+- [x] ~~**硬编码真实手机号**~~ (2025-06-05)
+  - `demo.py` 中 `PHONE` 改为从环境变量读取
+
+- [x] ~~**`is_first` 判断逻辑完全相反**~~ (2025-06-05)
+  - `telegram/skill.py` 中修复 `async for ... else` 的错误用法
+
+- [x] ~~**`_normalize_temperature` 重复定义**~~ (2025-06-05)
+  - 提取到 `helpers.py`，删除 `chatbot.py` 中两处重复
+
 - [ ] **单元测试覆盖**
   - 为 `TelegramWebSkill` 和 `WhatsAppWebSkill` 的核心方法编写测试
   - 使用 `pytest` + `pytest-asyncio`
-  - 关键路径：登录检查、聊天列表获取、消息发送、搜索
-  - 挑战：Playwright 操作需要 mock 或集成测试
 
 - [ ] **DOM 选择器抽象层**
   - 问题：Telegram/WhatsApp 前端更新会导致选择器失效
   - 方案：将选择器集中管理，支持多版本回退
-  - 例如：`SELECTORS["v2.1"]` → `SELECTORS["v2.2"]` 自动降级
 
 ---
 

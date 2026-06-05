@@ -157,7 +157,7 @@ im-bot/
 |------|------|------|
 | **Web 扫码登录** | `telegram_web/demo.py` | 浏览器打开 Telegram Web，扫码即可 |
 | **Session 提取** | `telegram_web/session_extractor.py` | Web 登录态 → Telethon StringSession |
-| **MCP 工具集** | `telegram_web/telegram_mcp_server.py` | Claude/Cursor 调用，共 13 个工具 |
+| **MCP 工具集** | `telegram_web/telegram_mcp_server.py` | Claude/Cursor 调用，共 15 个工具 |
 | **MTProto 技能** | `telegram/skill.py` | Telethon 原生协议 |
 | **对话引擎** | `agent/chatbot.py` | LLM + 策略约束 + 长期记忆 |
 | **WhatsApp Web** | `whatsapp_web/skill.py` ⭐ | Playwright 独立实例，扫码登录、消息收发、群链接加入 |
