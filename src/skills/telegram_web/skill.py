@@ -161,9 +161,9 @@ class TelegramWebSkill:
             '[class*="badge"]',
         ],
         "message_bubble": [
+            '.bubble:not(.bubbles)',
             '.bubble',
             '.bubble-content-wrapper',
-            '[class*="bubble"]',
         ],
         "message_input": [
             '#editable-message-text',
@@ -619,7 +619,7 @@ class TelegramWebSkill:
                     try:
                         # 发送者
                         sender = ""
-                        for sender_sel in ['.name', '.sender-name', '[class*="name"]']:
+                        for sender_sel in ['.peer-title', '.name', '.sender-name', '[class*="name"]']:
                             sender_el = await elem.query_selector(sender_sel)
                             if sender_el:
                                 sender = await sender_el.inner_text() or ""
@@ -629,7 +629,7 @@ class TelegramWebSkill:
 
                         # 消息文本
                         text = ""
-                        for text_sel in ['.message-text', '.text', '[class*="text"]']:
+                        for text_sel in ['.message', '.message-text', '.text', '[class*="text"]']:
                             text_el = await elem.query_selector(text_sel)
                             if text_el:
                                 text = await text_el.inner_text() or ""
@@ -639,8 +639,8 @@ class TelegramWebSkill:
 
                         # 如果是 outgoing 消息
                         is_outgoing = False
-                        outgoing_sel = await elem.query_selector('[class*="outgoing"], [class*="is-out"], .out')
-                        if outgoing_sel:
+                        class_attr = await elem.get_attribute("class") or ""
+                        if "is-out" in class_attr or "own" in class_attr:
                             is_outgoing = True
 
                         # 消息 ID
