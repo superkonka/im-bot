@@ -140,6 +140,20 @@ class TelegramWebSkill:
             '[class*="chatlist-chat"]',
             '.row-clickable',
             '.dialog',
+            '[data-peer-id]',
+        ],
+        "chat_title": [
+            '.peer-title',
+            '[class*="peer-title"]',
+            '.chat-title',
+            '.title',
+            '[class*="title"]',
+        ],
+        "chat_subtitle": [
+            '.dialog-subtitle',
+            '[class*="subtitle"]',
+            '.chat-subtitle',
+            '.last-message',
         ],
         "unread_badge": [
             '.badge',
@@ -221,8 +235,8 @@ class TelegramWebSkill:
         self._page = await self._context.new_page()
         await self._page.goto(self.URL, wait_until="domcontentloaded")
 
-        # 等待加载完成
-        await asyncio.sleep(3)
+        # 等待加载完成（聊天列表需要更长时间渲染）
+        await asyncio.sleep(8)
         print(f"[TelegramWebSkill] 页面已打开: {self._page.url}")
 
     async def stop(self) -> None:
@@ -514,7 +528,7 @@ class TelegramWebSkill:
                     try:
                         # 尝试获取标题
                         title = ""
-                        for title_sel in ['.chat-title', '.title', '[class*="title"]']:
+                        for title_sel in self.SELECTORS["chat_title"]:
                             title_el = await elem.query_selector(title_sel)
                             if title_el:
                                 title = await title_el.inner_text() or ""
@@ -524,7 +538,7 @@ class TelegramWebSkill:
 
                         # 尝试获取最后消息
                         last_msg = ""
-                        for msg_sel in ['.chat-subtitle', '.last-message', '[class*="subtitle"]']:
+                        for msg_sel in self.SELECTORS["chat_subtitle"]:
                             msg_el = await elem.query_selector(msg_sel)
                             if msg_el:
                                 last_msg = await msg_el.inner_text() or ""
